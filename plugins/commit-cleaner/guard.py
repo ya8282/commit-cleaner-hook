@@ -9,6 +9,7 @@ here is decisions, never rewrites.
 import json
 import os
 import re
+import signal
 import sys
 
 from clean import clean
@@ -319,7 +320,28 @@ def decide(payload):
     return None
 
 
+def _arm_alarm():
+    """Component A's payload budgets five seconds for a user-supplied pattern
+    (install.py:_MAIN). This reads the same `commitcleaner.patterns` file, via
+    load_patterns, so it needs the same ceiling: with `^(a+)+b$` in that file, a
+    single `gh pr create` burned 24 seconds of CPU without terminating.
+
+    Exiting 0 on fire is the fail-open shape used everywhere else here: saying
+    nothing means the tool call proceeds, and component A still cleans the
+    commit message itself.
+    """
+    try:
+        def _bail(signum, frame):
+            raise SystemExit(0)
+
+        signal.signal(signal.SIGALRM, _bail)
+        signal.alarm(5)
+    except Exception:
+        pass
+
+
 def main():
+    _arm_alarm()
     try:
         payload = json.load(sys.stdin)
     except Exception:
