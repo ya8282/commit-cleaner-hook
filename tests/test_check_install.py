@@ -22,7 +22,24 @@ def test_installed_and_executable_is_silent(tmp_path):
 
 def test_not_installed_warns(tmp_path):
     r = _repo(tmp_path)
-    assert "python3 ${CLAUDE_PLUGIN_ROOT}/install.py" in check_install.status(str(r))
+    assert "not installed" in check_install.status(str(r))
+
+
+def test_the_suggested_command_is_one_you_can_actually_run(tmp_path, monkeypatch):
+    """A literal ${CLAUDE_PLUGIN_ROOT} in the message expands to nothing when
+    pasted, so the reader is told to run `python3 /install.py`. This hook runs
+    where the variable is set, so it resolves the path itself."""
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugins/commit-cleaner@v1")
+    r = _repo(tmp_path)
+    warning = check_install.status(str(r))
+    assert "${CLAUDE_PLUGIN_ROOT}" not in warning
+    assert "python3 /plugins/commit-cleaner@v1/install.py" in warning
+
+
+def test_the_suggested_command_falls_back_to_the_slash_command(tmp_path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    r = _repo(tmp_path)
+    assert "/commit-cleaner-install" in check_install.status(str(r))
 
 
 def test_present_but_not_executable_warns(tmp_path):

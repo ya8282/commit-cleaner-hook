@@ -43,13 +43,14 @@ the commit-msg hook into that repo:
 /commit-cleaner-install
 ```
 
-or directly:
+Use the slash command. `${CLAUDE_PLUGIN_ROOT}` is set inside Claude Code
+but not in your shell, so pasting `python3 ${CLAUDE_PLUGIN_ROOT}/install.py`
+into a terminal expands to `python3 /install.py` and fails. To run
+`install.py` from a terminal, substitute the real plugin directory —
+usually under `~/.claude/plugins/`, and the SessionStart reminder prints
+the resolved path when the hook is missing.
 
-```
-python3 ${CLAUDE_PLUGIN_ROOT}/install.py
-```
-
-This writes a self-contained payload (no dependency on the plugin being
+The install writes a self-contained payload (no dependency on the plugin being
 present later) into the repo's hooks directory — `core.hooksPath` if set,
 otherwise `.git/hooks` — and chains any pre-existing `commit-msg` hook so
 it still runs and can still block a bad commit.
@@ -59,13 +60,19 @@ If the hooks directory is tracked by git, install refuses to write into it
 silently) and instead prints the two lines to add to your committed hook by
 hand.
 
-Other invocations:
+Other invocations, with `<plugin-dir>` standing in for the real path:
 
 ```
-python3 ${CLAUDE_PLUGIN_ROOT}/install.py --uninstall   # remove, restore any chained hook
-python3 ${CLAUDE_PLUGIN_ROOT}/install.py --list         # every repo it's installed into
-python3 ${CLAUDE_PLUGIN_ROOT}/install.py --upgrade      # regenerate the payload
+python3 <plugin-dir>/install.py --uninstall   # remove, restore any chained hook
+python3 <plugin-dir>/install.py --list        # every repo it's installed into
+python3 <plugin-dir>/install.py --upgrade     # regenerate the payload
 ```
+
+`--list` reflects installs only: a repo drops out of it on `--uninstall`,
+and a refused install (tracked hooks directory) never enters it, because
+in that case you still have to add the two printed lines yourself. Any
+other argument is rejected with a usage message rather than being treated
+as `--install`.
 
 Install also walks `git submodule foreach` and installs into each
 submodule, since a submodule is its own repo with its own hooks directory.

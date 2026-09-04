@@ -186,3 +186,77 @@ def test_unwritable_hooks_dir_reports_a_message_not_a_traceback(tmp_path):
         hooks.chmod(0o700)  # restore so pytest can clean up tmp_path
     assert ok is False
     assert msg
+
+
+# --- Fix wave 2: uninstall symmetry, registry truthfulness, argv handling ---
+
+
+def test_uninstall_refuses_a_plain_directory(tmp_path):
+    """It used to print "uninstalled from .../notarepo/.git/hooks" and exit 0
+    -- a success message for work that could not have happened."""
+    ok, msg = install.uninstall_repo(str(tmp_path))
+    assert ok is False
+    assert "git repository" in msg.lower()
+    assert not (tmp_path / ".git").exists()
+
+
+def test_uninstall_main_exits_nonzero_outside_a_repo(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert install.main(["install.py", "--uninstall"]) == 1
+    assert "git repository" in capsys.readouterr().out.lower()
+
+
+def test_uninstall_removes_the_repo_from_the_registry(tmp_path):
+    r = _repo(tmp_path)
+    install.install_repo(str(r))
+    assert str(r) in install.registry_path().read_text()
+    install.uninstall_repo(str(r))
+    assert str(r) not in install.registry_path().read_text()
+
+
+def test_a_refused_install_is_not_recorded(tmp_path):
+    """--list means "installed into". A tracked hooks dir is a refusal: the
+    user still has to paste two lines into their own hook."""
+    r = _repo(tmp_path)
+    husky = r / ".husky"
+    husky.mkdir()
+    (husky / "commit-msg").write_text("#!/bin/sh\nexit 0\n")
+    subprocess.run(["git", "add", ".husky/commit-msg"], cwd=r, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add husky hook"], cwd=r, check=True)
+    subprocess.run(["git", "config", "core.hooksPath", ".husky"], cwd=r, check=True)
+    ok, _ = install.install_repo(str(r))
+    assert ok is False
+    reg = install.registry_path()
+    assert not reg.exists() or str(r) not in reg.read_text()
+
+
+def test_a_non_repo_install_is_not_recorded(tmp_path):
+    install.install_repo(str(tmp_path))
+    reg = install.registry_path()
+    assert not reg.exists() or str(tmp_path) not in reg.read_text()
+
+
+def test_upgrade_is_handled_explicitly(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    monkeypatch.chdir(r)
+    install.install_repo(str(r))
+    payload = r / ".git" / "hooks" / "commit-cleaner.py"
+    payload.write_text("# stale\n")
+    assert install.main(["install.py", "--upgrade"]) == 0
+    assert "# stale" not in payload.read_text()
+
+
+def test_unrecognised_argument_is_rejected(tmp_path, monkeypatch, capsys):
+    """It used to fall through to install, so a typo'd --uninstal installed."""
+    r = _repo(tmp_path)
+    monkeypatch.chdir(r)
+    assert install.main(["install.py", "--uninstal"]) == 2
+    assert "unrecognised" in capsys.readouterr().err
+    assert not (r / ".git" / "hooks" / "commit-msg").exists()
+
+
+def test_no_argument_still_installs(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    monkeypatch.chdir(r)
+    assert install.main(["install.py"]) == 0
+    assert (r / ".git" / "hooks" / "commit-msg").exists()

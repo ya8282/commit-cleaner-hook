@@ -14,7 +14,29 @@ from install import resolve_hooks_dir
 
 MSG = ("commit-cleaner is not installed in this repo, so AI attribution "
        "trailers will not be stripped from commits. Install it by running "
-       "`python3 ${CLAUDE_PLUGIN_ROOT}/install.py`.")
+       "`{cmd}`.")
+
+
+def install_command():
+    # type: () -> str
+    """A command the reader can actually run.
+
+    `python3 ${CLAUDE_PLUGIN_ROOT}/install.py` is not one: pasted into a
+    terminal, the shell expands the unset variable to nothing and runs
+    `python3 /install.py`. This hook runs from Claude Code, where
+    CLAUDE_PLUGIN_ROOT is set, so the path can be resolved here and named in
+    full. When it is somehow unset, the slash command is the route that needs
+    no path at all.
+    """
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if root:
+        return "python3 " + os.path.join(root, "install.py")
+    return "/commit-cleaner-install"
+
+
+def not_installed_message():
+    # type: () -> str
+    return MSG.format(cmd=install_command())
 
 
 def status(repo):
@@ -28,7 +50,7 @@ def status(repo):
             return None
         hook = resolve_hooks_dir(repo) / "commit-msg"
         if not hook.exists() or "commit-cleaner" not in hook.read_text():
-            return MSG
+            return not_installed_message()
         if not os.access(str(hook), os.X_OK):
             return (
                 f"commit-cleaner's commit-msg hook exists but is not "

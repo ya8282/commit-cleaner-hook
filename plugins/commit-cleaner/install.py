@@ -142,16 +142,37 @@ def is_tracked(repo, path):
     return r.returncode == 0
 
 
-def _record(repo):
-    # type: (str) -> None
+def _rewrite_registry(mutate):
+    # type: (callable) -> None
+    """Registry bookkeeping never fails a run: an unwritable registry is
+    cosmetic, an aborted install is not."""
     try:
         reg = registry_path()
         reg.parent.mkdir(parents=True, exist_ok=True)
         data = json.loads(reg.read_text()) if reg.exists() else {}
-        data[str(repo)] = VERSION
+        mutate(data)
         reg.write_text(json.dumps(data, indent=2))
     except Exception:
         pass
+
+
+def _record(repo):
+    # type: (str) -> None
+    _rewrite_registry(lambda data: data.__setitem__(str(repo), VERSION))
+
+
+def _unrecord(repo):
+    # type: (str) -> None
+    """--list claims to name every repo it is installed into. Recording an
+    install and never reversing it made that claim false after the first
+    uninstall."""
+    _rewrite_registry(lambda data: data.pop(str(repo), None))
+
+
+def _is_repo(repo):
+    # type: (str) -> bool
+    check = _git(["rev-parse", "--is-inside-work-tree"], repo)
+    return check.returncode == 0 and check.stdout.strip() == "true"
 
 
 def install_repo(repo):
@@ -166,8 +187,7 @@ def install_repo(repo):
     if shutil.which("git") is None:
         return False, "git was not found on PATH. Install git and retry."
 
-    check = _git(["rev-parse", "--is-inside-work-tree"], repo)
-    if check.returncode != 0 or check.stdout.strip() != "true":
+    if not _is_repo(repo):
         return False, f"{repo} is not a git repository."
 
     hooks = resolve_hooks_dir(repo)
@@ -181,7 +201,9 @@ def install_repo(repo):
             side = Path(repo) / ".git" / "commit-cleaner.py"
             side.parent.mkdir(parents=True, exist_ok=True)
             side.write_text(payload)
-            _record(repo)
+            # Deliberately not recorded: the hook is not installed until the
+            # user pastes those two lines into their committed hook, and
+            # --list must not claim otherwise.
             return False, (
                 f"{hooks} is tracked by git, so installing there would dirty your "
                 "working tree and be reverted by the next checkout. The payload is "
@@ -208,6 +230,17 @@ def install_repo(repo):
 
 def uninstall_repo(repo):
     # type: (str) -> Tuple[bool, str]
+    """Symmetric with install_repo: refuses anywhere it was never invited.
+
+    Without the check it reported "uninstalled from ./notarepo/.git/hooks"
+    and exited 0 in a plain directory, which is a success message for work
+    that could not have happened.
+    """
+    if shutil.which("git") is None:
+        return False, "git was not found on PATH. Install git and retry."
+    if not _is_repo(repo):
+        return False, f"{repo} is not a git repository."
+
     hooks = resolve_hooks_dir(repo)
     hook = hooks / "commit-msg"
     chained = hooks / "commit-msg.chained"
@@ -219,6 +252,10 @@ def uninstall_repo(repo):
     payload = hooks / "commit-cleaner.py"
     if payload.exists():
         payload.unlink()
+    side = Path(repo) / ".git" / "commit-cleaner.py"
+    if side.exists():
+        side.unlink()
+    _unrecord(repo)
     return True, f"uninstalled from {hooks}"
 
 
@@ -226,6 +263,15 @@ def _submodules(repo):
     # type: (str) -> list
     r = _git(["submodule", "foreach", "--quiet", "echo $sm_path"], repo)
     return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+
+
+USAGE = (
+    "usage: install.py [--install | --upgrade | --uninstall | --list]\n"
+    "  --install   (default) install the commit-msg hook here and in submodules\n"
+    "  --upgrade   same, overwriting an existing payload with this version\n"
+    "  --uninstall remove it and restore any hook that was chained\n"
+    "  --list      every repo it is currently installed into"
+)
 
 
 def main(argv):
@@ -241,6 +287,13 @@ def main(argv):
         ok, msg = uninstall_repo(repo)
         print(msg)
         return 0 if ok else 1
+    # --upgrade is the same write path: generate_payload() always emits the
+    # current version and install_repo() overwrites. It is named explicitly
+    # rather than reached by fallthrough, because a fallthrough that installs
+    # also installs for `--uninstal`, `--lst`, and `--help`.
+    if mode not in ("--install", "--upgrade"):
+        print(f"install.py: unrecognised argument {mode!r}\n{USAGE}", file=sys.stderr)
+        return 2
 
     targets = [repo] + [os.path.join(repo, s) for s in _submodules(repo)]
     all_ok = True
