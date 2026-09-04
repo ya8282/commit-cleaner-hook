@@ -133,6 +133,16 @@ def _bash(cmd):
 _MCP_PR = re.compile(r"^mcp__.*__(create_pull_request|update_pull_request)$")
 _MCP_COMMIT = re.compile(r"^mcp__.*__(create_or_update_file|delete_file|push_files)$")
 _MCP_MERGE = re.compile(r"^mcp__.*__merge_pull_request$")
+# add_issue_comment and add_comment_to_pending_review confirmed against the
+# current github-mcp-server README. create_pending_pull_request_review /
+# submit_pending_pull_request_review, as named in the fix request, no longer
+# exist there: the server has since consolidated create/submit/delete review
+# actions into one tool, pull_request_review_write (`body` is optional,
+# `method` selects the action) -- covered here in its place.
+_MCP_COMMENT = re.compile(
+    r"^mcp__.*__(add_issue_comment|add_comment_to_pending_review"
+    r"|pull_request_review_write)$"
+)
 # Confirmed against github/github-mcp-server's README (Step 1): create_pull_request
 # and update_pull_request use `body`; create_or_update_file, delete_file and
 # push_files use `message`. `commit_message`/`description` kept as harmless
@@ -147,35 +157,64 @@ _DIRTY_REASON = (
 )
 
 
+_SENTINEL = "\x00-commit-cleaner-guard-sentinel-\x00"
+
+
 def _is_dirty(text):
     # type: (str) -> bool
     """clean() assumes commit-message-shaped input, always trailing-newline
     terminated, and its result always is too (see clean.py). PR bodies and
-    MCP text fields are not: they arrive without a trailing newline. Compare
-    on a normalized copy so that convention doesn't register as a "cleaned"
-    diff on every clean body."""
+    MCP text fields are not: they arrive without a trailing newline, so
+    normalize before comparing or every clean body reads as "cleaned."
+
+    Separately, clean() refuses to strip a message down to nothing (a real
+    commit can't have an empty message), so a body that is ENTIRELY
+    attribution -- no other content -- round-trips unchanged and would
+    otherwise read as "not dirty," the opposite of correct here: PR bodies
+    have no such floor. A trailing sentinel line, built to match none of the
+    default or custom patterns, keeps clean()'s kept-lines list non-empty so
+    it actually strips the attribution instead of preserving it.
+    """
     if not text:
         return False
     normalized = text if text.endswith("\n") else text + "\n"
-    return clean(normalized, load_patterns(os.getcwd())) != normalized
+    guarded = normalized + _SENTINEL + "\n"
+    return clean(guarded, load_patterns(os.getcwd())) != guarded
+
+
+_BODY_VALUE = re.compile(r"--body[= ]\s*(?:(['\"])(.*?)\1|(\S+))", re.S)
 
 
 def _gh(cmd):
-    if not re.search(r"(?:^|[;&|(]|\s)gh\s+(pr|issue)\b", cmd):
+    # Subcommand detection (is this `pr merge`?) runs on strip_code output so
+    # a body that merely mentions "gh pr merge" in prose can't self-trigger
+    # the merge guard -- convention 4, a guard pass and a cleaner pass over
+    # separately-derived strings. Body *extraction* stays on the raw command:
+    # the body lives inside exactly the quotes strip_code removes.
+    stripped = strip_code(cmd)
+    if not re.search(r"(?:^|[;&|(]|\s)gh\s+(pr|issue)\b", stripped):
         return None
-    if re.search(r"\bpr\s+merge\b", cmd) and re.search(r"--(body|subject)\b", cmd):
+    if re.search(r"\bpr\s+merge\b", stripped) and re.search(r"--(body|subject)\b", stripped):
         return _out("deny",
                     "gh pr merge writes a commit message server-side, onto a branch "
                     "where no hook can clean it. Merge without --body/--subject.")
 
-    m = re.search(r"--body[= ]\s*(['\"])(.*?)\1", cmd, re.S)
-    if m and _is_dirty(m.group(2)):
-        return _out("deny", _DIRTY_REASON)
+    m = _BODY_VALUE.search(cmd)
+    if m:
+        text = m.group(2) if m.group(1) else m.group(3)
+        if _is_dirty(text):
+            return _out("deny", _DIRTY_REASON)
 
     m = re.search(r"--body-file[= ]\s*(\S+)", cmd)
     if m:
+        path = m.group(1).strip("'\"")
+        if path == "-":
+            return _out("ask",
+                        "This reads the PR body from stdin, which this hook can't "
+                        "inspect. Confirm it carries no AI attribution before "
+                        "proceeding.")
         try:
-            with open(m.group(1).strip("'\""), encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 if _is_dirty(fh.read()):
                     return _out("deny", f"{_DIRTY_REASON} (in {m.group(1)})")
         except Exception:
@@ -188,7 +227,7 @@ def _mcp(tool, tool_input):
         return _out("deny",
                     "merge_pull_request writes a commit message server-side, where "
                     "no hook can clean it.")
-    if not (_MCP_PR.match(tool) or _MCP_COMMIT.match(tool)):
+    if not (_MCP_PR.match(tool) or _MCP_COMMIT.match(tool) or _MCP_COMMENT.match(tool)):
         return None
     for field in _MCP_TEXT_FIELDS:
         if _is_dirty(tool_input.get(field) or ""):
