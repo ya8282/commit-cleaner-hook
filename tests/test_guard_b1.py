@@ -142,3 +142,41 @@ def test_ordinary_file_edit_untouched():
 def test_malformed_payload_returns_none():
     assert guard.decide({}) is None
     assert guard.decide({"tool_name": "Bash", "tool_input": {}}) is None
+
+
+# --- Fix wave 2: flag search scoped to the git commit invocation ---
+# `-n` belongs to whichever command it was typed after. Searching the whole
+# command string denied three ordinary compound shapes, and the deny text
+# blamed --no-verify, so the obvious retry was the same command again.
+
+
+def test_dash_n_on_a_different_git_subcommand_allowed():
+    assert bash('git add -n . && git commit -m "wip"') is None
+    assert bash('git log -n 5; git commit -m "y"') is None
+
+
+def test_dash_n_on_a_later_non_git_command_allowed():
+    assert bash('git commit -m "x" && npm run build -- -n') is None
+    assert bash('git commit -m "x" | tee -a log; grep -n foo log') is None
+
+
+def test_env_prefix_on_a_different_command_allowed():
+    """The assignment belongs to npm, not to the commit after it."""
+    assert bash('HOME=/tmp npm test && git commit -m "x"') is None
+
+
+def test_hookspath_flag_on_a_different_git_invocation_allowed():
+    assert bash('git -c core.hooksPath=/dev/null status; git commit -m "x"') is None
+
+
+def test_no_verify_in_a_compound_command_still_denied():
+    """Scoping must not lose the true positive it was scoped around."""
+    assert dec('git add . && git commit --no-verify -m "x"') == "deny"
+    assert dec('git add -n .; git commit -nm x') == "deny"
+
+
+def test_deny_text_names_the_flag_that_triggered_it():
+    """A message that blames --no-verify when the model typed -nm invites the
+    same retry. It has to name what was actually matched."""
+    assert "-nm" in bash("git commit -nm x")["permissionDecisionReason"]
+    assert "--no-verif" in bash("git commit --no-verif -m x")["permissionDecisionReason"]

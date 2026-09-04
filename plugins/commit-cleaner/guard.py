@@ -37,6 +37,11 @@ _HOOK_TARGET = re.compile(r"(hooks/|\.husky/|/)" + HOOK_NAME + r"\b")
 _GIT_INVOCATION = re.compile(r"(?:^|[;&|(`]|\bdo\b|\bthen\b)\s*"
                              r"(?:\S*/)?(?:command\s+|env\s+)?"
                              r"(?:\w+=\S*\s+)*(?:\\)?git\b")
+# Where one invocation stops and the next command starts. The `--` of
+# `npm run build -- -n` is not a separator: that argument list belongs to
+# whatever command owns it, and if that command is not git, no git
+# invocation match started there in the first place.
+_SEGMENT_END = re.compile(r"[;&|)`]|\bdo\b|\bthen\b")
 
 # A closed set of shell wrappers that hand a quoted argument to a nested
 # shell: bash/sh/zsh/dash -c, and eval. Anchored the same way as
@@ -96,22 +101,49 @@ def _out(decision, reason):
     }
 
 
+def _commit_segments(c):
+    # type: (str) -> list
+    """The `git commit` invocations in a compound command, each cut down to
+    its own words.
+
+    Searching the whole command string for `-n` denied `git add -n . && git
+    commit -m wip`, `git log -n 5; git commit -m y`, and `git commit -m x &&
+    npm run build -- -n` -- three ordinary shapes where the flag belongs to a
+    different command entirely. Worse, the deny text named --no-verify, so the
+    obvious retry was the same command again.
+
+    Each invocation runs from the start of its _GIT_INVOCATION match (which
+    includes any leading `VAR=val` assignments and `command`/`env`/path
+    prefix, so those stay attached to the right git) to the next shell
+    separator. strip_code has already removed quoted spans, so a separator
+    found here is real syntax, not text inside an argument.
+    """
+    out = []
+    for m in _GIT_INVOCATION.finditer(c):
+        end = _SEGMENT_END.search(c, m.end())
+        seg = c[m.start():end.start() if end else len(c)]
+        if re.search(r"\bcommit\b", seg):
+            out.append(seg)
+    return out
+
+
 def _bash(cmd):
     inner = _unwrap(cmd)
     if inner is not None:
         return _bash(inner)
 
     c = strip_code(cmd)
-    is_commit = bool(_GIT_INVOCATION.search(c)) and re.search(r"\bcommit\b", c)
 
-    if is_commit:
-        if _NO_VERIFY.search(c) or _SHORT_N.search(c):
+    for seg in _commit_segments(c):
+        flag = _NO_VERIFY.search(seg) or _SHORT_N.search(seg)
+        if flag:
             return _out("deny",
-                        "--no-verify skips the commit-msg hook that strips AI "
-                        "attribution. Run the commit without it. To skip a slow "
-                        "pre-commit hook instead, disable that specific hook "
-                        "(pre-commit: SKIP=<id>), not every hook.")
-        if _INLINE_HOOKSPATH.search(c) or _ENV_PREFIX.search(c):
+                        f"`{flag.group(0)}` on this `git commit` means --no-verify, "
+                        "which skips the commit-msg hook that strips AI attribution. "
+                        "Run the commit without that flag. To skip a slow pre-commit "
+                        "hook instead, disable that specific hook (pre-commit: "
+                        "SKIP=<id>), not every hook.")
+        if _INLINE_HOOKSPATH.search(seg) or _ENV_PREFIX.search(seg):
             return _out("deny",
                         "This redirects git's hook or config lookup, which "
                         "disables the commit-msg cleaner. Run the commit without it.")
