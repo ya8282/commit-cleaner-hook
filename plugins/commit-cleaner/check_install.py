@@ -12,8 +12,9 @@ import sys
 
 from install import resolve_hooks_dir
 
-MSG = ("commit-cleaner install is required to strip AI attribution trailers. "
-       "Run: `python3 ${CLAUDE_PLUGIN_ROOT}/install.py` in this repo.")
+MSG = ("commit-cleaner is not installed in this repo, so AI attribution "
+       "trailers will not be stripped from commits. Install it by running "
+       "`python3 ${CLAUDE_PLUGIN_ROOT}/install.py`.")
 
 
 def status(repo):

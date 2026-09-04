@@ -22,7 +22,7 @@ def test_installed_and_executable_is_silent(tmp_path):
 
 def test_not_installed_warns(tmp_path):
     r = _repo(tmp_path)
-    assert "commit-cleaner install" in check_install.status(str(r))
+    assert "python3 ${CLAUDE_PLUGIN_ROOT}/install.py" in check_install.status(str(r))
 
 
 def test_present_but_not_executable_warns(tmp_path):
