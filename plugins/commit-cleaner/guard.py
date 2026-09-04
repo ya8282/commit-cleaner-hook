@@ -182,7 +182,25 @@ def _is_dirty(text):
     return clean(guarded, load_patterns(os.getcwd())) != guarded
 
 
-_BODY_VALUE = re.compile(r"--body[= ]\s*(?:(['\"])(.*?)\1|(\S+))", re.S)
+# gh accepts a short form for every flag this guard cares about, and a model
+# reaching for `gh pr create -b "..."` is not doing anything exotic -- it is the
+# form the tool's own --help lists first. Matching only the long spelling left
+# the whole of B2 bypassable by typing two fewer characters.
+#   -b == --body        (pr create / pr edit / pr merge / issue create / ...)
+#   -F == --body-file   (pr create / pr edit / pr merge)
+#   -t == --title       on pr create/edit, --subject on pr merge
+# `--body-file` also starts with `--body`, which is why the separator class
+# ([= ]) is required: it keeps `--body-file x` out of the body-value match.
+# Ceiling: a value glued to its short flag (`-bhello`) is not matched. gh
+# accepts it, but it cannot carry a multi-line trailer without quoting, and
+# widening the separator would make `-b` match inside ordinary words.
+_BODY_FLAG = r"(?:--body|(?<![\w-])-b)"
+_BODY_FILE_FLAG = r"(?:--body-file|(?<![\w-])-F)"
+_MERGE_MSG_FLAG = re.compile(
+    r"--(?:body|subject|body-file)\b|(?<![\w-])-[btF](?![\w-])"
+)
+_BODY_VALUE = re.compile(_BODY_FLAG + r"[= ]\s*(?:(['\"])(.*?)\1|(\S+))", re.S)
+_BODY_FILE_VALUE = re.compile(_BODY_FILE_FLAG + r"[= ]\s*(\S+)")
 
 
 def _gh(cmd):
@@ -194,19 +212,20 @@ def _gh(cmd):
     stripped = strip_code(cmd)
     if not re.search(r"(?:^|[;&|(]|\s)gh\s+(pr|issue)\b", stripped):
         return None
-    if re.search(r"\bpr\s+merge\b", stripped) and re.search(r"--(body|subject)\b", stripped):
+    if re.search(r"\bpr\s+merge\b", stripped) and _MERGE_MSG_FLAG.search(stripped):
         return _out("deny",
                     "gh pr merge writes a commit message server-side, onto a branch "
-                    "where no hook can clean it. Merge without --body/--subject.")
+                    "where no hook can clean it. Merge without "
+                    "--body/--subject/--body-file (-b/-t/-F).")
 
-    m = _BODY_VALUE.search(cmd)
-    if m:
+    # Every occurrence, not just the first: `gh pr create -t "..." -b "..."`
+    # would otherwise hinge on which flag came first.
+    for m in _BODY_VALUE.finditer(cmd):
         text = m.group(2) if m.group(1) else m.group(3)
         if _is_dirty(text):
             return _out("deny", _DIRTY_REASON)
 
-    m = re.search(r"--body-file[= ]\s*(\S+)", cmd)
-    if m:
+    for m in _BODY_FILE_VALUE.finditer(cmd):
         path = m.group(1).strip("'\"")
         if path == "-":
             return _out("ask",
@@ -218,7 +237,7 @@ def _gh(cmd):
                 if _is_dirty(fh.read()):
                     return _out("deny", f"{_DIRTY_REASON} (in {m.group(1)})")
         except Exception:
-            return None
+            continue
     return None
 
 

@@ -184,3 +184,85 @@ def test_unrelated_mcp_comment_tool_untouched():
 def test_body_file_stdin_asks():
     d = bash("gh pr create --body-file -")
     assert d["permissionDecision"] == "ask"
+
+
+# --- Fix wave 2: gh short flags (Important 1) ---
+# gh's own --help lists the short form first, so a model reaching for `-b`
+# is doing the ordinary thing, not evading. Matching only `--body` left all
+# of B2 bypassable by typing two fewer characters.
+
+
+def test_short_body_flag_on_pr_create_denied():
+    d = bash('gh pr create --title t -b "summary\n\n' + CO + '"')
+    assert d["permissionDecision"] == "deny"
+
+
+def test_short_body_flag_on_pr_edit_denied():
+    d = bash('gh pr edit 3 -b "summary\n\n' + SESS + '"')
+    assert d["permissionDecision"] == "deny"
+
+
+def test_short_body_flag_with_equals_denied():
+    trailer = "Claude-Sess" + "ion:" + "https://claude.ai/code/session_abc"
+    d = bash(f"gh pr create --title t -b={trailer}")
+    assert d["permissionDecision"] == "deny"
+
+
+def test_short_body_flag_clean_allowed():
+    assert bash('gh pr create --title t -b "a clean summary"') is None
+
+
+def test_short_body_file_flag_denied(tmp_path):
+    """-F is --body-file for gh pr create/edit."""
+    f = tmp_path / "body.md"
+    f.write_text("summary\n\n" + CO + "\n")
+    d = bash(f"gh pr create -F {f}")
+    assert d["permissionDecision"] == "deny"
+
+
+def test_short_body_file_flag_clean_allowed(tmp_path):
+    f = tmp_path / "body.md"
+    f.write_text("just a summary\n")
+    assert bash(f"gh pr create -F {f}") is None
+
+
+def test_short_body_file_stdin_asks():
+    """A bare `-` still means stdin, which the hook cannot inspect."""
+    d = bash("gh pr create -F -")
+    assert d["permissionDecision"] == "ask"
+
+
+def test_pr_merge_with_short_flags_denied():
+    d = bash('gh pr merge --squash -b "x" -t "y"')
+    assert d["permissionDecision"] == "deny"
+
+
+def test_pr_merge_with_short_subject_only_denied():
+    d = bash('gh pr merge 3 --squash -t "subject"')
+    assert d["permissionDecision"] == "deny"
+
+
+def test_pr_merge_with_body_file_denied(tmp_path):
+    """--body-file writes the same server-side commit message --body does."""
+    f = tmp_path / "body.md"
+    f.write_text("just a summary\n")
+    d = bash(f"gh pr merge 3 --squash --body-file {f}")
+    assert d["permissionDecision"] == "deny"
+
+
+def test_plain_pr_merge_still_allowed():
+    assert bash("gh pr merge 3 --squash") is None
+    assert bash("gh pr merge 3 --squash --delete-branch") is None
+
+
+def test_second_body_flag_is_checked_too():
+    """Extraction walks every match, so the decision does not hinge on which
+    flag happens to come first on the command line."""
+    d = bash('gh pr create -t "title" --body "summary\n\n' + CO + '"')
+    assert d["permissionDecision"] == "deny"
+
+
+def test_issue_create_with_short_body_denied():
+    """_gh matches `gh (pr|issue)`, so issues are in scope for the CLI."""
+    d = bash('gh issue create --title t -b "report\n\n' + CO + '"')
+    assert d["permissionDecision"] == "deny"
