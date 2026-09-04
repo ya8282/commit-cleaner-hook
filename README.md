@@ -1,62 +1,65 @@
-# commit-cleaner-hook
+# Commit cleaner hook
 
-Prevent Claude from slipping into your git commit messages and pull requests.
+Prevent Claude (`@anthropic.com`) from slipping into your git commit messages and pull requests.
 
-You might have seen then the unwanted messages before:
+You've probably seen these surface before:
 
 ```
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_ID
 ```
 
-Currently, you can use the Claude Code attribution setting to turn
-them off. However, when the behavior breaks or if you unknowingly paste
-them into a commit message, you're unprotected from its intrusion.
-
-## How it works
-
-This is a Claude Code plugin, composed of two components:
-
-1. **A `commit-msg` git hook**: cleans every commit in a repo where it's installed. It runs after git adds the commit message,
-   whether added by the `-m` or `--amend` options, heredoc, `$EDITOR`, or `printf`.
-a good trade.
-2.  **A `PreToolUse` guard** inside Claude Code covers the exits — `git commit --no-verify`, deleting the hook, chmodding it, quietly repointing `core.hooksPath` — and refuses `gh` and GitHub MCP calls carrying a dirty
-PR body. It stops these before they happen rather than tidying up after, because GitHub keeps a public edit history: cleaning a body later just
-publishes a diff of exactly what you removed and when. The receipts outlive the cover-up.
+Claude Code has an [attribution](https://code.claude.com/docs/en/settings-reference#attribution) setting that turns them off. It works right up until the
+setting gets reset/deprecated, a different assistant shows up with its own signature, or you paste a message from somewhere and it arrives with a friend. 
+This is the layer that doesn't depend on anyone remembering.
 
 ## Install
+
+1. Add the plugin in Claude Code by running the following commands:
 
 ```
 /plugin marketplace add ya8282/commit-cleaner-hook
 /plugin install commit-cleaner@commit-cleaner-hook
 ```
 
-That's the guard — the bouncer at the door. The git hook is the one doing
-the actual work, and it installs per repo:
+2. Then, in each project you want to keep clean:
 
 ```
 /commit-cleaner-install
 ```
 
-Use the slash command. `${CLAUDE_PLUGIN_ROOT}` only means something inside
-Claude Code; your shell has no idea and will cheerfully try to run
-`/install.py`. From a terminal, substitute the real plugin directory (under
-`~/.claude/plugins/` — the session-start reminder prints the resolved path
-when the hook is missing).
+Claude Code reminds you at the start of a session if the current project is missing it.
 
-The install drops a self-contained payload into the repo's hooks directory
-(`core.hooksPath` if set, otherwise `.git/hooks`) and chains any existing
-`commit-msg` hook so your commitlint keeps its veto. If that directory is
-tracked by git, it refuses to write there and prints the two lines to add
-yourself — a shared hooks directory belongs to your team, and this tool is
-not going to redecorate it while nobody's looking. Submodules get their own
-install.
+Commit cleaner runs prior to other installed pre-commit hooks, such as `commitlint` and `husky`.
+
+Additional commands:
 
 ```
-python3 <plugin-dir>/install.py --uninstall   # restore any chained hook
-python3 <plugin-dir>/install.py --list        # repos it's installed into
-python3 <plugin-dir>/install.py --upgrade     # regenerate the payload
+# Uninstall
+python3 <PLUGIN_DIR>/install.py --uninstall
+
+# List the installed locations
+python3 <PLUGIN_DIR>/install.py --list
+
+# Update to the latest version
+python3 <PLUGIN_DIR>/install.py --upgrade
 ```
+
+By default, your `<PLUGIN_DIR>` is `~/.claude/plugins/`. The session-start reminder prints the full path.
+
+See [What it doesn't catch](#what-it-doesnt-catch).
+
+## How it works
+
+This plugin is composed of two components:
+
+1. **A `commit-msg` git hook**: cleans every commit in a repo where it's installed.
+2. **A `PreToolUse` guard**: prevents most workarounds of the `commit-msg` hook.
+
+The git hook performs the cleaning, and it works regardless of who makes the commit.
+The guard stops the hook from being skipped or switched off.
+
+See [Coverage at a glance](#coverage-at-a-glance) for more details.
 
 ## What gets stripped
 
@@ -73,79 +76,44 @@ byte-identical — this thing has one job and it doesn't get creative.
 
 ## Configuration
 
-Through `git config`, not environment variables. A git hook doesn't inherit
-your Claude Code session's environment, so an env var would mean the same
-repo behaves differently depending on who typed the command — which is
-precisely the flavour of chaos we're here to eliminate.
+Settings are stored in `git config` instead of environment variables, so every
+user inherits the same commit behavior.
 
 ```
 git config commitcleaner.patterns .commitcleaner-patterns
 git config commitcleaner.defaults false   # use only your file
 ```
 
-One Python regex per line, matched case-insensitively against whole lines.
-`#` comments and blank lines ignored. A regex that won't compile gets
-skipped with a warning instead of failing your commit, because your typo
-should not become your problem at 2am.
+This features one Python regex per line, matched case-insensitively against whole lines.
 
-Other agents ship commented out, opt-in — removing someone else's signature
-without being asked is a different kind of rude:
+## What the hook skips
 
-```
-# .commitcleaner-patterns
-^\s*Co-Authored-By:.*@cursor\.com\s*>?\s*$
-^\s*Co-Authored-By:.*\bcodex\b.*$
-```
+While the hooks prevent nearly all the paths that Claude Code can crawl
+into your commit messages, there are a few remaining ways it can happen:
 
-## Known limitations
-
-Everything below is a real gap, found by testing rather than guessed at.
-Overstating coverage would be worse than admitting it:
-
-- **Replayed commits keep their trailers.** `cherry-pick`, `rebase`, and
-  `git am` don't run `commit-msg` at all, so `git rebase main` re-lands old
-  messages exactly as they were. This is the one that will actually bite
+- **Commits copied in from somewhere else.** `rebase`, `cherry-pick` and
+  friends replay existing messages without re-running the hook, so an old
+  trailer comes along for the ride. This is the one that will actually bite
   you.
-- **`gh pr create --editor` / `--web`** compose the body somewhere no hook
-  can see. `--body-file -` reads from stdin, which the hook can't inspect,
-  so it asks rather than guessing.
-- **`gh api` straight at the Contents API**, or an MCP server whose
-  git-write tools aren't named like GitHub's, goes around the guard — it
-  matches known tool names, not arbitrary HTTP.
-- **`git notes`, `git tag -a`, `git stash push`** have no hook to attach
-  to. git simply doesn't offer one.
-- **Deep shell nesting.** The guard unwraps one layer of `bash -c "..."` /
-  `eval`, but not `$(echo git commit --no-verify)` or three-plus levels of
-  alternating quotes. At some point you're not slipping up, you're
-  committing a crime.
-- **A `core.hooksPath` change after install** (husky, lefthook) redirects
-  hooks elsewhere. The session-start check catches it next session, not
-  the instant it happens.
-- **No global install**, on purpose. A global hooks path is dead in any
-  repo that sets its own, and silently replaces `.git/hooks` in every repo
-  that doesn't — a blast radius nobody asked for.
+- **Anything you write outside the terminal** — a pull request body typed
+  into a browser tab or popped open in an editor. Nothing is watching there.
+- **Projects where you haven't run the install.** It's per-project by
+  design; a machine-wide version would quietly break other tools' hooks.
+- **Deliberate evasion.** This stops accidents and habits. Someone
+  determined to route around it can, and at that point they're not slipping
+  up, they're committing a crime.
 
 ## Contributing
 
-`docs/writing-a-hook.md` has the conventions, plus the Claude Code
-hook-protocol details that are easy to get wrong (several of which cost
-this repo a fix round to learn). Shipped code is stdlib-only on Python 3.9+,
-so the dev dependencies are a test runner and a linter:
+`docs/writing-a-hook.md` contains the conventions and the Claude Code
+hook details. Commit cleaner uses `stdlib`-only on Python 3.9+ and requires 
+installing a test runner and a linter as dependencies:
 
 ```
 pip install pytest ruff
 pytest
 ruff check .
 ```
-
-CI runs both on Python 3.9–3.13 on Linux, plus macOS at each end of that
-range.
-
-One quirk worth knowing before it confuses you: the test fixtures build
-attribution trailers by concatenating fragments at runtime, because a guard
-that matches raw command text will happily block commits containing this
-repo's own test data. The tool is aggressive enough to fight its own test
-suite, which we find funnier than we probably should.
 
 ## Coverage at a glance
 
@@ -218,9 +186,7 @@ suite, which we find funnier than we probably should.
 | History that already carries trailers | NO | Non-goal. `git filter-repo` exists |
 
 Short version: if it goes through `git` in an installed repo, or through
-`gh` or the GitHub MCP tools in a Claude Code session, it is covered. The
-real holes are replayed commits, browser-composed PR bodies, and raw API
-calls.
+`gh` or the GitHub MCP tools in a Claude Code session, the commit cleaner covers it.
+It doesn't cover the more complex situations like replayed commits, browser-composed PR bodies, and raw API calls.
 
-MIT. Take it, fork it, ship it — no attribution required, which is, after
-all, the entire point.
+**License**: MIT
