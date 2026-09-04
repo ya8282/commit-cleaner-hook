@@ -1,11 +1,28 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 PLUGIN = Path(__file__).resolve().parents[1] / "plugins" / "commit-cleaner"
 sys.path.insert(0, str(PLUGIN))
 
 import install  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolated_registry(monkeypatch, tmp_path_factory):
+    """Every install_repo() call in this suite would otherwise write into the
+    developer's real ~/.commit-cleaner/registry.json. Point CLAUDE_PLUGIN_DATA
+    at a disposable directory, unrelated to any test's own tmp_path so it never
+    shows up as an untracked file in a test repo's git status.
+
+    Tests that deliberately exercise the set/unset registry-path behaviour
+    override this within their own body.
+    """
+    registry_dir = tmp_path_factory.mktemp("registry")
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(registry_dir))
 
 
 def _repo(tmp_path):
@@ -101,9 +118,13 @@ def test_uninstall_restores_the_chained_hook(tmp_path):
     assert not (hooks / "commit-cleaner.py").exists()
 
 
-def test_registry_falls_back_when_plugin_data_unset(monkeypatch):
+def test_registry_falls_back_when_plugin_data_unset(monkeypatch, tmp_path):
     monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
-    assert install.registry_path().name == "registry.json"
+    # Path.home() reads $HOME on POSIX; point it at a disposable directory so
+    # this genuinely exercises the fallback shape without ever computing the
+    # developer's real home path.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert install.registry_path() == tmp_path / ".commit-cleaner" / "registry.json"
 
 
 def test_registry_uses_plugin_data_when_set(monkeypatch, tmp_path):
@@ -142,3 +163,37 @@ def test_installs_into_each_submodule(tmp_path, monkeypatch):
     install.main(["install.py", "--install"])
     sub_hooks = install.resolve_hooks_dir(str(top / "sub"))
     assert (sub_hooks / "commit-msg").exists()
+
+
+def test_refuses_when_not_a_git_repo(tmp_path):
+    """Never write where you were not invited: a plain directory must not get
+    a fabricated .git/hooks."""
+    ok, msg = install.install_repo(str(tmp_path))
+    assert ok is False
+    assert "git repository" in msg.lower()
+    assert not (tmp_path / ".git").exists()
+
+
+def test_no_git_on_path_reports_a_message_not_a_traceback(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    fake_bin = tmp_path / "fakebin"  # empty: no git symlinked into it
+    fake_bin.mkdir()
+    monkeypatch.setenv("PATH", str(fake_bin))
+    ok, msg = install.install_repo(str(r))
+    assert ok is False
+    assert "git" in msg.lower()
+
+
+def test_unwritable_hooks_dir_reports_a_message_not_a_traceback(tmp_path):
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root ignores directory write permissions")
+    r = _repo(tmp_path)
+    hooks = r / ".git" / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    hooks.chmod(0o500)
+    try:
+        ok, msg = install.install_repo(str(r))
+    finally:
+        hooks.chmod(0o700)  # restore so pytest can clean up tmp_path
+    assert ok is False
+    assert msg

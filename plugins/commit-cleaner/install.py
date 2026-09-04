@@ -7,6 +7,7 @@ dangling path — which blocks commits. Hence: inline, copy, stamp a version.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -112,7 +113,15 @@ def registry_path():
 
 def _git(args, repo):
     # type: (list, str) -> subprocess.CompletedProcess
-    return subprocess.run(["git"] + args, cwd=repo, capture_output=True, text=True, timeout=10)
+    try:
+        return subprocess.run(
+            ["git"] + args, cwd=repo, capture_output=True, text=True, timeout=10
+        )
+    except FileNotFoundError:
+        # Safety net: install_repo checks shutil.which("git") first and reports
+        # this clearly, but nothing else that reaches _git may raise a
+        # traceback if PATH changes underneath it mid-run.
+        return subprocess.CompletedProcess(args, 127, stdout="", stderr="git: not found")
 
 
 def resolve_hooks_dir(repo):
@@ -147,38 +156,54 @@ def _record(repo):
 
 def install_repo(repo):
     # type: (str) -> Tuple[bool, str]
-    """Returns (installed, message). Refuses a tracked hooks directory."""
+    """Returns (installed, message). Refuses a tracked hooks directory.
+
+    Never writes anything unless git is present and repo is an actual git
+    repository — "never write where you were not invited." Write failures
+    (missing git, unwritable hooks dir) are reported, not raised: this is a
+    CLI, so it may fail, it just may not crash with a traceback.
+    """
+    if shutil.which("git") is None:
+        return False, "git was not found on PATH. Install git and retry."
+
+    check = _git(["rev-parse", "--is-inside-work-tree"], repo)
+    if check.returncode != 0 or check.stdout.strip() != "true":
+        return False, f"{repo} is not a git repository."
+
     hooks = resolve_hooks_dir(repo)
     payload = generate_payload()
 
-    tracked_dir = hooks.exists() and any(
-        is_tracked(repo, p) for p in hooks.iterdir() if p.is_file()
-    )
-    if tracked_dir:
-        side = Path(repo) / ".git" / "commit-cleaner.py"
-        side.parent.mkdir(parents=True, exist_ok=True)
-        side.write_text(payload)
-        _record(repo)
-        return False, (
-            f"{hooks} is tracked by git, so installing there would dirty your "
-            "working tree and be reverted by the next checkout. The payload is "
-            f"at {side} instead. Add these two lines to your committed "
-            "commit-msg hook:\n"
-            '  command -v python3 >/dev/null 2>&1 && python3 "$(git rev-parse '
-            '--git-dir)/commit-cleaner.py" "$1" || true\n'
+    try:
+        tracked_dir = hooks.exists() and any(
+            is_tracked(repo, p) for p in hooks.iterdir() if p.is_file()
         )
+        if tracked_dir:
+            side = Path(repo) / ".git" / "commit-cleaner.py"
+            side.parent.mkdir(parents=True, exist_ok=True)
+            side.write_text(payload)
+            _record(repo)
+            return False, (
+                f"{hooks} is tracked by git, so installing there would dirty your "
+                "working tree and be reverted by the next checkout. The payload is "
+                f"at {side} instead. Add these two lines to your committed "
+                "commit-msg hook:\n"
+                '  command -v python3 >/dev/null 2>&1 && python3 "$(git rev-parse '
+                '--git-dir)/commit-cleaner.py" "$1" || true\n'
+            )
 
-    hooks.mkdir(parents=True, exist_ok=True)
-    existing = hooks / "commit-msg"
-    chained = hooks / "commit-msg.chained"
-    if existing.exists() and "commit-cleaner" not in existing.read_text():
-        existing.replace(chained)
-        chained.chmod(0o755)
-    (hooks / "commit-cleaner.py").write_text(payload)
-    existing.write_text(WRAPPER)
-    existing.chmod(0o755)
-    _record(repo)
-    return True, f"installed into {hooks}"
+        hooks.mkdir(parents=True, exist_ok=True)
+        existing = hooks / "commit-msg"
+        chained = hooks / "commit-msg.chained"
+        if existing.exists() and "commit-cleaner" not in existing.read_text():
+            existing.replace(chained)
+            chained.chmod(0o755)
+        (hooks / "commit-cleaner.py").write_text(payload)
+        existing.write_text(WRAPPER)
+        existing.chmod(0o755)
+        _record(repo)
+        return True, f"installed into {hooks}"
+    except OSError as exc:
+        return False, f"could not write to {hooks}: {exc}. Check permissions and retry."
 
 
 def uninstall_repo(repo):
@@ -213,14 +238,17 @@ def main(argv):
         print(reg.read_text() if reg.exists() else "{}")
         return 0
     if mode == "--uninstall":
-        print(uninstall_repo(repo)[1])
-        return 0
+        ok, msg = uninstall_repo(repo)
+        print(msg)
+        return 0 if ok else 1
 
     targets = [repo] + [os.path.join(repo, s) for s in _submodules(repo)]
+    all_ok = True
     for t in targets:
         ok, msg = install_repo(t)
         print(("OK  " if ok else "SKIP ") + msg)
-    return 0
+        all_ok = all_ok and ok
+    return 0 if all_ok else 1
 
 
 if __name__ == "__main__":
