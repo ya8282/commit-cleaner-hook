@@ -37,11 +37,31 @@ Code's hook protocol that cost this project a fix round each to learn.
   `if` cannot express "Bash or PowerShell" or "git commit or git push" —
   combining conditions is not supported. If a handler needs to react to two
   tools or two conditions, write another handler, not a compound `if`.
-- **`if` is best-effort in the safe direction.** When Claude Code cannot
-  determine which commands a Bash input actually runs — for example a
-  command built from a variable, or wrapped in a way the matcher can't
-  parse — it runs the hook regardless rather than skipping it. A guard must
-  not assume `if` filtered anything; it still has to check.
+- **`if` is best-effort, and the two failure directions are not symmetric.**
+  When Claude Code cannot determine what a Bash input's command name is at
+  all — `$TOOL git push`, or anything inside `$()` or backticks — it runs the
+  hook regardless rather than skipping it (`hooks.md:445`); that direction is
+  safe. But when the command name *is* determinable and simply is not the
+  literal word the pattern names, the hook is silently skipped, not run. This
+  project proved it in production: `Bash(git *)` silently skips
+  `/usr/bin/git`, `command git`, `\git`, `env FOO=1 git`, `rtk git`, and
+  `bash -c "git …"` — every one of those command names is determinable, none
+  of them is the literal token `git`. A guard must not assume `if` filtered
+  anything; it still has to check.
+
+  This is why the shipped Bash handler in this repo carries no `if` at all:
+  gating it would leave the guard dead for exactly the evasions it exists to
+  catch. `hooks.md:448` makes the same point directly — `if` is best-effort,
+  so it should not be used to enforce a hard allow or deny; enforce with the
+  hook's own logic instead.
+
+  Path rules have a separate trap: Claude Code checks path permissions
+  against `Edit(path)` and `Read(path)` rules only. An `if` written as
+  `Write(path)`, `NotebookEdit(path)`, `Glob(path)`, or `MultiEdit(path)` is
+  accepted but never consulted, and warns at startup
+  (`permissions.md:312`). Write the rule as `Edit(**/.git/**)` even when the
+  handler's `matcher` is `Write` or `NotebookEdit` — the matcher is what
+  selects the tool; the `if` path check always routes through `Edit`.
 - **`updatedInput` replaces the entire input object** and can be paired
   with `"ask"` rather than `"allow"` — it does not force auto-approval on
   its own. Multi-hook merge behaviour (what happens when two hooks both
