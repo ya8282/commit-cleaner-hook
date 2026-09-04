@@ -266,3 +266,42 @@ def test_issue_create_with_short_body_denied():
     """_gh matches `gh (pr|issue)`, so issues are in scope for the CLI."""
     d = bash('gh issue create --title t -b "report\n\n' + CO + '"')
     assert d["permissionDecision"] == "deny"
+
+
+# --- Fix wave 2: MCP coverage matched to the CLI's ---
+
+
+def test_mcp_add_reply_to_pull_request_comment_dirty_denied():
+    """The reply half of the review-comment pair carries the same body."""
+    d = guard.decide({
+        "tool_name": "mcp__github__add_reply_to_pull_request_comment",
+        "tool_input": {"commentId": 7, "body": "fixed\n\n" + CO},
+    })
+    assert d["permissionDecision"] == "deny"
+
+
+def test_mcp_issue_write_dirty_denied():
+    """`gh issue create --body` has always been denied by _gh. Leaving the MCP
+    path open meant the same content was blocked or allowed purely by which
+    tool the model reached for."""
+    d = guard.decide({
+        "tool_name": "mcp__github__issue_write",
+        "tool_input": {"method": "create", "title": "t", "body": "report\n\n" + CO},
+    })
+    assert d["permissionDecision"] == "deny"
+
+
+def test_mcp_discussion_comment_write_dirty_denied():
+    d = guard.decide({
+        "tool_name": "mcp__github__discussion_comment_write",
+        "tool_input": {"body": "reply\n\n" + SESS},
+    })
+    assert d["permissionDecision"] == "deny"
+
+
+def test_mcp_issue_write_clean_allowed():
+    d = guard.decide({
+        "tool_name": "mcp__github__issue_write",
+        "tool_input": {"method": "create", "title": "t", "body": "a clean report"},
+    })
+    assert d is None

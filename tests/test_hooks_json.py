@@ -1,8 +1,14 @@
 import json
+import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HOOKS = ROOT / "plugins" / "commit-cleaner" / "hooks" / "hooks.json"
+PLUGIN = ROOT / "plugins" / "commit-cleaner"
+HOOKS = PLUGIN / "hooks" / "hooks.json"
+sys.path.insert(0, str(PLUGIN))
+
+import guard  # noqa: E402
 
 
 def test_hooks_json_parses():
@@ -38,28 +44,53 @@ def test_no_powershell_matcher_paired_with_a_bash_rule():
             assert "PowerShell" not in handler["matcher"]
 
 
-def test_mcp_matcher_covers_every_tool_guard_py_handles():
-    """guard.py's _MCP_PR/_MCP_COMMIT/_MCP_COMMENT/_MCP_MERGE name these nine
-    tools; the matcher must fire for all of them or the guard never runs."""
-    import re
+def _guard_mcp_regexes():
+    """Every _MCP_* regex guard.py defines, found by introspection.
 
+    Derived, never listed. The previous version of this test hardcoded nine
+    tool names, so adding a tenth to guard.py and forgetting hooks.json --
+    which makes the guard dead in production for that tool -- kept the test
+    green. A list that has to be edited alongside the thing it checks is not
+    an invariant.
+    """
+    return {
+        name: value
+        for name, value in vars(guard).items()
+        if name.startswith("_MCP_") and hasattr(value, "pattern")
+    }
+
+
+def _names_in(pattern, source):
+    """The tool names out of a `mcp__.*__(a|b|c)` alternation."""
+    m = re.search(r"mcp__\\?\.\*__\(?([\w|]+)\)?\$?$", pattern)
+    assert m, f"{source} no longer has the shape this test derives names from: {pattern}"
+    return set(m.group(1).split("|"))
+
+
+def _mcp_matcher():
     cfg = json.loads(HOOKS.read_text())
-    mcp_handlers = [
+    handlers = [
         h for h in cfg["hooks"]["PreToolUse"] if h["matcher"].startswith("mcp__")
     ]
-    assert mcp_handlers
-    pattern = re.compile(mcp_handlers[0]["matcher"])
-    covered = [
-        "create_pull_request",
-        "update_pull_request",
-        "create_or_update_file",
-        "delete_file",
-        "push_files",
-        "merge_pull_request",
-        "add_issue_comment",
-        "add_comment_to_pending_review",
-        "pull_request_review_write",
-    ]
-    for tool in covered:
+    assert len(handlers) == 1, "one MCP handler, or these two checks miss a matcher"
+    return handlers[0]["matcher"]
+
+
+def test_mcp_matcher_covers_every_tool_guard_py_handles():
+    """A tool guard.py decides on but hooks.json does not match is a guard
+    that never runs. Both sides are derived from the code."""
+    matcher = re.compile(_mcp_matcher())
+    for attr, regex in _guard_mcp_regexes().items():
+        for tool in _names_in(regex.pattern, attr):
+            name = f"mcp__github__{tool}"
+            assert matcher.match(name), f"{name} ({attr}) is not matched by hooks.json"
+
+
+def test_mcp_matcher_names_no_tool_guard_py_ignores():
+    """The other direction: a matcher wider than the guard spawns a process
+    that can only ever decide nothing."""
+    guard_regexes = list(_guard_mcp_regexes().values())
+    for tool in _names_in(_mcp_matcher(), "hooks.json matcher"):
         name = f"mcp__github__{tool}"
-        assert pattern.match(name), f"{name} not matched by {mcp_handlers[0]['matcher']}"
+        assert any(r.match(name) for r in guard_regexes), \
+            f"{name} is matched by hooks.json but no _MCP_* regex in guard.py"

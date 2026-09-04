@@ -172,10 +172,19 @@ _MCP_MERGE = re.compile(r"^mcp__.*__merge_pull_request$")
 # exist there: the server has since consolidated create/submit/delete review
 # actions into one tool, pull_request_review_write (`body` is optional,
 # `method` selects the action) -- covered here in its place.
+# add_reply_to_pull_request_comment is the reply half of the review-comment
+# pair: same `body`, same permanent public edit history, and a model answering
+# a review comment is exactly where a trailer gets pasted.
 _MCP_COMMENT = re.compile(
     r"^mcp__.*__(add_issue_comment|add_comment_to_pending_review"
-    r"|pull_request_review_write)$"
+    r"|add_reply_to_pull_request_comment|pull_request_review_write)$"
 )
+# Issues and discussions were listed as out of scope, but `_gh` matches
+# `gh\s+(pr|issue)\b`, so `gh issue create --body` has been denied from the
+# start. Leaving the MCP path open meant the same content was blocked or
+# allowed purely by which tool the model happened to reach for. The CLI's
+# behaviour is the one to match: a body is a body.
+_MCP_ISSUE = re.compile(r"^mcp__.*__(issue_write|discussion_comment_write)$")
 # Confirmed against github/github-mcp-server's README (Step 1): create_pull_request
 # and update_pull_request use `body`; create_or_update_file, delete_file and
 # push_files use `message`. `commit_message`/`description` kept as harmless
@@ -279,7 +288,8 @@ def _mcp(tool, tool_input):
         return _out("deny",
                     "merge_pull_request writes a commit message server-side, where "
                     "no hook can clean it.")
-    if not (_MCP_PR.match(tool) or _MCP_COMMIT.match(tool) or _MCP_COMMENT.match(tool)):
+    if not (_MCP_PR.match(tool) or _MCP_COMMIT.match(tool)
+            or _MCP_COMMENT.match(tool) or _MCP_ISSUE.match(tool)):
         return None
     for field in _MCP_TEXT_FIELDS:
         if _is_dirty(tool_input.get(field) or ""):

@@ -17,8 +17,12 @@ Two components work together:
   use exists, asks about) actions that would bypass or disable the git hook
   — `git commit --no-verify`, deleting or chmodding the hook file,
   redirecting `core.hooksPath` or `GIT_DIR` — and denies `gh` CLI and
-  GitHub MCP calls that would post a dirty PR body, comment, or file
-  straight to GitHub, where no git hook runs.
+  GitHub MCP calls that would post a dirty body straight to GitHub, where
+  no git hook runs. That covers pull request bodies, review and issue
+  comments, issue and discussion bodies, and file writes through the
+  Contents API, in both their `gh` and MCP forms — GitHub keeps a publicly
+  readable edit history, so anything that lands is permanent and the guard
+  prevents rather than remediates.
 
 Together they cover the common case: a Claude Code session driving `git`
 and `gh` in this repo. Neither is a substitute for the other; see
@@ -139,9 +143,6 @@ gap:
   `husky init` after this tool installed) can silently redirect hooks
   elsewhere and defeat the guard. The SessionStart check surfaces this at
   the start of the next session, not immediately.
-- **MCP `issue_write` and `discussion_comment_write` are deliberately
-  unmatched.** Issues and discussions carry bodies too, but they are
-  outside this tool's scope of commits and pull requests.
 - **Command substitution and deep nesting are not covered.** The guard
   unwraps one layer of `bash -c "..."` / `eval '...'`, but not arbitrary
   command substitution such as `$(echo git commit --no-verify)`, nor three
