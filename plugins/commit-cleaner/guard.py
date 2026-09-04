@@ -7,8 +7,12 @@ rtk already returns it for the same key on the same commands. So enforcement
 here is decisions, never rewrites.
 """
 import json
+import os
 import re
 import sys
+
+from clean import clean
+from gitconfig import load_patterns
 
 HOOK_NAME = "commit-msg"
 
@@ -126,6 +130,72 @@ def _bash(cmd):
     return None
 
 
+_MCP_PR = re.compile(r"^mcp__.*__(create_pull_request|update_pull_request)$")
+_MCP_COMMIT = re.compile(r"^mcp__.*__(create_or_update_file|delete_file|push_files)$")
+_MCP_MERGE = re.compile(r"^mcp__.*__merge_pull_request$")
+# Confirmed against github/github-mcp-server's README (Step 1): create_pull_request
+# and update_pull_request use `body`; create_or_update_file, delete_file and
+# push_files use `message`. `commit_message`/`description` kept as harmless
+# no-ops for fields not present on any covered tool today.
+_MCP_TEXT_FIELDS = ("body", "message", "commit_message", "description")
+
+_DIRTY_REASON = (
+    "This carries AI attribution (Co-Authored-By / session trailer). GitHub keeps "
+    "an edit history that anyone with read access can view, so cleaning it after "
+    "the fact would leave a permanent record of what was removed. Remove the "
+    "attribution lines and retry."
+)
+
+
+def _is_dirty(text):
+    # type: (str) -> bool
+    """clean() assumes commit-message-shaped input, always trailing-newline
+    terminated, and its result always is too (see clean.py). PR bodies and
+    MCP text fields are not: they arrive without a trailing newline. Compare
+    on a normalized copy so that convention doesn't register as a "cleaned"
+    diff on every clean body."""
+    if not text:
+        return False
+    normalized = text if text.endswith("\n") else text + "\n"
+    return clean(normalized, load_patterns(os.getcwd())) != normalized
+
+
+def _gh(cmd):
+    if not re.search(r"(?:^|[;&|(]|\s)gh\s+(pr|issue)\b", cmd):
+        return None
+    if re.search(r"\bpr\s+merge\b", cmd) and re.search(r"--(body|subject)\b", cmd):
+        return _out("deny",
+                    "gh pr merge writes a commit message server-side, onto a branch "
+                    "where no hook can clean it. Merge without --body/--subject.")
+
+    m = re.search(r"--body[= ]\s*(['\"])(.*?)\1", cmd, re.S)
+    if m and _is_dirty(m.group(2)):
+        return _out("deny", _DIRTY_REASON)
+
+    m = re.search(r"--body-file[= ]\s*(\S+)", cmd)
+    if m:
+        try:
+            with open(m.group(1).strip("'\""), encoding="utf-8") as fh:
+                if _is_dirty(fh.read()):
+                    return _out("deny", f"{_DIRTY_REASON} (in {m.group(1)})")
+        except Exception:
+            return None
+    return None
+
+
+def _mcp(tool, tool_input):
+    if _MCP_MERGE.match(tool):
+        return _out("deny",
+                    "merge_pull_request writes a commit message server-side, where "
+                    "no hook can clean it.")
+    if not (_MCP_PR.match(tool) or _MCP_COMMIT.match(tool)):
+        return None
+    for field in _MCP_TEXT_FIELDS:
+        if _is_dirty(tool_input.get(field) or ""):
+            return _out("deny", _DIRTY_REASON)
+    return None
+
+
 _GIT_PATH = re.compile(r"[/\\]\.git[/\\](hooks[/\\]|config$)")
 
 
@@ -145,9 +215,13 @@ def decide(payload):
     try:
         tool = payload.get("tool_name") or ""
         ti = payload.get("tool_input") or {}
+        if tool.startswith("mcp__"):
+            return _mcp(tool, ti)
         if tool in ("Bash", "PowerShell"):
             cmd = ti.get("command")
-            return _bash(cmd) if cmd else None
+            if not cmd:
+                return None
+            return _bash(cmd) or _gh(cmd)
         if tool in ("Write", "Edit", "NotebookEdit"):
             return _file_tool(ti)
     except Exception:
