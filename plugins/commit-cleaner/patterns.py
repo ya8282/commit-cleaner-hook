@@ -12,7 +12,7 @@ DEFAULT_PATTERNS = [
     r"^\s*Co-Authored-By:.*@anthropic\.com\s*>?\s*$",
     r"^\s*Claude-Session:\s*\S+\s*$",
     r"^\s*\S*-?Session:\s*https?://claude\.ai/code/session_\S+\s*$",
-    r"^.*Generated with \[Claude Code\]\(.*\).*$",
+    r"^\s*\U0001f916?\s*Generated with \[Claude Code\]\(https?://[^)]*\)\s*$",
     r"^\s*\U0001f916?\s*Generated with Claude Code\s*$",
 ]
 

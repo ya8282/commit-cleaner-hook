@@ -59,3 +59,37 @@ def test_malformed_extra_pattern_is_skipped_not_fatal():
 def test_use_defaults_false_uses_only_extra():
     p = compile_patterns(extra=[r"^DROPME$"], use_defaults=False)
     assert clean("DROPME\n" + CO + "\n", p) == CO + "\n"
+
+
+def test_preserves_prose_mentioning_generated_with_claude_code():
+    msg = (
+        "docs: describe repo history\n\nNote: this repo template was originally "
+        "🤖 Generated with [Claude Code](https://claude.ai/code) "
+        "before we customized it.\n"
+    )
+    assert clean(msg, P) == msg
+
+
+def test_strips_generated_with_footer_markdown_link_alone():
+    footer = "Generated with [Claude Code](https://claude.ai/code)"
+    assert clean("subject\n\n" + footer + "\n", P) == "subject\n"
+
+
+def test_strips_generated_with_footer_markdown_link_with_emoji():
+    footer = "\U0001f916 Generated with [Claude Code](https://claude.ai/code)"
+    assert clean("subject\n\n" + footer + "\n", P) == "subject\n"
+
+
+def test_preserves_footer_with_trailing_text():
+    msg = "subject\n\nGenerated with [Claude Code](https://claude.ai/code) but then modified\n"
+    assert clean(msg, P) == msg
+
+
+def test_strips_plain_text_generated_with_line():
+    footer = "Generated with Claude Code"
+    assert clean("subject\n\n" + footer + "\n", P) == "subject\n"
+
+
+def test_strips_plain_text_generated_with_line_with_emoji():
+    footer = "\U0001f916 Generated with Claude Code"
+    assert clean("subject\n\n" + footer + "\n", P) == "subject\n"
