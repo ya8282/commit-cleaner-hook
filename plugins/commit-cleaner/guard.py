@@ -28,9 +28,48 @@ _HOOK_TARGET = re.compile(r"(hooks/|\.husky/|/)" + HOOK_NAME + r"\b")
 # Bare `VAR=val git ...` (no `env` keyword) is standard shell inline-assignment
 # syntax and just as real an evasion as `env FOO=1 git`, so the assignment
 # group is unconditional, not gated behind literal "env ".
-_GIT_INVOCATION = re.compile(r"(?:^|[;&|(]|\bdo\b|\bthen\b)\s*"
+# The anchor set includes a backtick: `` `git commit --no-verify ...` `` is a
+# real command-substitution form, independent of quote-stripping.
+_GIT_INVOCATION = re.compile(r"(?:^|[;&|(`]|\bdo\b|\bthen\b)\s*"
                              r"(?:\S*/)?(?:command\s+|env\s+)?"
                              r"(?:\w+=\S*\s+)*(?:\\)?git\b")
+
+# A closed set of shell wrappers that hand a quoted argument to a nested
+# shell: bash/sh/zsh/dash -c, and eval. Anchored the same way as
+# _GIT_INVOCATION so an ordinary prose argument -- e.g. a commit message that
+# happens to mention "sh -c" -- can't trigger it: the wrapper token has to
+# sit right after a command separator (or the start of the string), and the
+# quote has to follow it immediately, not several words later.
+_SHELL_WRAP = re.compile(
+    r"(?:^|[;&|(`]|\bdo\b|\bthen\b)\s*"
+    r"(?:(?:bash|sh|zsh|dash)\s+-c\s+|eval\s+)"
+)
+_QUOTED_ARG = re.compile(r"""(['"])(.*?)\1""", re.S)
+
+
+def _unwrap(cmd):
+    """Peel one layer of `bash -c "..."` / `eval '...'` etc. so the guard
+    inspects what the wrapper actually executes, not just which shell it
+    hands the string to.
+
+    Ceiling, documented rather than rediscovered: this covers only the
+    closed wrapper set above with an immediately-following quoted argument.
+    It does not cover arbitrary command substitution such as
+    `$(echo git commit --no-verify ...)` -- recognising that in general
+    means recognising arbitrary word-preceded indirection, which is
+    unbounded. B1 defends against accidental attribution (a model reaching
+    for --no-verify because it looks like ordinary git usage); a model
+    doesn't accidentally reach for $(...) indirection to hide a flag, and if
+    a commit lands anyway, component A still strips the trailer at
+    commit-msg time regardless of how the `git commit` was invoked.
+    """
+    m = _SHELL_WRAP.search(cmd)
+    if not m:
+        return None
+    qm = _QUOTED_ARG.match(cmd, m.end())
+    if not qm:
+        return None
+    return qm.group(2)
 
 
 def strip_code(cmd):
@@ -54,6 +93,10 @@ def _out(decision, reason):
 
 
 def _bash(cmd):
+    inner = _unwrap(cmd)
+    if inner is not None:
+        return _bash(inner)
+
     c = strip_code(cmd)
     is_commit = bool(_GIT_INVOCATION.search(c)) and re.search(r"\bcommit\b", c)
 

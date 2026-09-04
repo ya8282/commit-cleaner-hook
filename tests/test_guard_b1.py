@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 PLUGIN = Path(__file__).resolve().parents[1] / "plugins" / "commit-cleaner"
 sys.path.insert(0, str(PLUGIN))
 
@@ -72,6 +74,45 @@ def test_unrelated_commands_untouched():
 def test_prose_about_git_is_not_matched():
     """A commit message ABOUT --no-verify must not be read as running it."""
     assert bash('git commit -m "docs: explain why --no-verify is banned"') is None
+
+
+def test_prose_mentioning_sh_c_is_not_matched():
+    """A commit message that mentions sh -c must not trigger the unwrapper."""
+    assert bash('git commit -m "docs: explain why sh -c bypasses guards"') is None
+
+
+def test_shell_wrapper_forms_denied():
+    """bash/sh/zsh -c and eval hand a quoted argument to a nested shell;
+    the guard has to look inside, not just at the outer command name."""
+    assert dec('bash -c "git commit --no-verify -m x"') == "deny"
+    assert dec('sh -c "git commit --no-verify -m x"') == "deny"
+    assert dec('zsh -c "git commit --no-verify -m x"') == "deny"
+    assert dec('eval "git commit --no-verify -m x"') == "deny"
+
+
+def test_shell_wrapper_single_quoted_denied():
+    assert dec("bash -c 'git commit --no-verify -m x'") == "deny"
+    assert dec("eval 'git commit --no-verify -m x'") == "deny"
+
+
+def test_backtick_form_denied():
+    assert dec("`git commit --no-verify -m x`") == "deny"
+
+
+def test_shell_wrapper_with_clean_commit_untouched():
+    """The wrapper must not make an otherwise-clean commit look dangerous."""
+    assert bash("bash -c \"git commit -m 'feat: a normal commit'\"") is None
+
+
+@pytest.mark.xfail(
+    reason="B1 unwraps a closed set of shell wrappers (bash/sh/zsh/dash -c, "
+    "eval); arbitrary $(...) command substitution is an unbounded pattern "
+    "that is out of scope for accidental-attribution defense. See _unwrap's "
+    "docstring in guard.py."
+)
+def test_command_substitution_is_a_documented_limit():
+    """$(...) indirection is parked deliberately -- see _unwrap's docstring."""
+    assert dec("$(echo git commit --no-verify -m x)") == "deny"
 
 
 def test_write_into_git_hooks_asks():
