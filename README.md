@@ -164,3 +164,17 @@ gap:
 
 See `docs/writing-a-hook.md` for the conventions this repo's hooks follow
 and the facts about Claude Code's hook protocol that are easy to get wrong.
+
+Development setup — the shipped code is stdlib-only on Python 3.9+, so the
+two dev dependencies are the test runner and the linter:
+
+```
+pip install pytest ruff
+pytest
+ruff check .
+```
+
+CI runs both on Python 3.9 through 3.13 on Linux, plus macOS at each end of
+that range. One test fixture builds attribution trailers by concatenating
+fragments at runtime rather than writing them out literally: a guard that
+matches raw command text otherwise refuses this repo's own test data.

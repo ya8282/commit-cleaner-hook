@@ -2,10 +2,24 @@ name: CI
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        include:
+          # macOS is where several of this tool's decisions come from: the 3.9
+          # floor (system python), the absent timeout(1) that forces the
+          # signal.alarm design, and the fail-open path when python3 is the
+          # system copy. None of it was exercised on Linux alone.
+          # Python 3.9 has no darwin arm64 build in actions/python-versions,
+          # so the floor runs on the x64 runner and the top of the range on
+          # macos-latest, which is arm64.
+          - os: macos-13
+            python: "3.9"
+          - os: macos-latest
+            python: "3.13"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
