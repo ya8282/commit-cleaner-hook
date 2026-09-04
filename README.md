@@ -47,7 +47,7 @@ python3 <PLUGIN_DIR>/install.py --upgrade
 
 By default, your `<PLUGIN_DIR>` is `~/.claude/plugins/`. The session-start reminder prints the full path.
 
-See [What it doesn't catch](#what-it-doesnt-catch).
+See [What the hook skips](#what-the-hook-skips).
 
 ## How it works
 
@@ -117,73 +117,73 @@ ruff check .
 
 ## Coverage at a glance
 
-`OK` prevented, `ASK` prompts you, `NO` gets through.
+✅ prevented &nbsp;·&nbsp; ⚠️ prompts you &nbsp;·&nbsp; ❌ gets through
 
 ### Local commits (the `commit-msg` hook)
 
 | Path | | Notes |
 | :-- | :--: | :-- |
-| `git commit -m` / `-am` / repeated `-m` | OK | |
-| `-F file`, `-F -`, heredoc, pipe | OK | The hook sees the assembled message, not your command |
-| `$EDITOR` (no `-m`) | OK | |
-| `--amend`, including `--no-edit` | OK | |
-| `-C <commit>` (reuse a message) | OK | |
-| `git merge -m`, `rebase -i` reword | OK | |
-| Commits by any other tool in an installed repo | OK | It is a git hook, not a Claude hook |
-| **`cherry-pick`, `rebase` replay, `git am`** | NO | git never runs `commit-msg` on these. `git rebase main` re-lands old messages intact. **The gap most likely to bite you.** |
-| `git notes add -m`, `git tag -a -m`, `git stash push -m` | NO | git offers no hook for any of them |
-| Repos where you have not run the install | NO | Per-repo on purpose; the session-start check reminds you |
+| `git commit -m` / `-am` / repeated `-m` | ✅ | |
+| `-F file`, `-F -`, heredoc, pipe | ✅ | The hook sees the assembled message, not your command |
+| `$EDITOR` (no `-m`) | ✅ | |
+| `--amend`, including `--no-edit` | ✅ | |
+| `-C <commit>` (reuse a message) | ✅ | |
+| `git merge -m`, `rebase -i` reword | ✅ | |
+| Commits by any other tool in an installed repo | ✅ | It is a git hook, not a Claude hook |
+| **`cherry-pick`, `rebase` replay, `git am`** | ❌ | git never runs `commit-msg` on these. `git rebase main` re-lands old messages intact. **The gap most likely to bite you.** |
+| `git notes add -m`, `git tag -a -m`, `git stash push -m` | ❌ | git offers no hook for any of them |
+| Repos where you have not run the install | ❌ | Per-repo on purpose; the session-start check reminds you |
 
 ### Keeping the hook switched on (the guard)
 
 | Attempt | | Notes |
 | :-- | :--: | :-- |
-| `--no-verify`, `--no-verif`, `--no-veri` | OK | git accepts abbreviated flags, so all three are covered |
-| `-n`, `-nm`, `-anm` flag clusters | OK | |
-| `git -c core.hooksPath=... commit` | OK | |
-| `rm` or `chmod -x` on the hook file | OK | |
-| `GIT_CONFIG_GLOBAL=`, `HOME=`, `GIT_DIR=`, `HUSKY=0` prefixes | OK | |
-| `/usr/bin/git`, `command git`, `env FOO=1 git`, `rtk git` | OK | |
-| One layer of `bash -c`, `sh -c`, `eval`, or backticks | OK | |
-| `git config core.hooksPath ...` (persistent) | ASK | `husky init` runs exactly this |
-| `Write` or `Edit` into `.git/hooks/` or `.git/config` | ASK | Adding a remote is routine |
-| `$(echo git commit --no-verify)` | NO | Arbitrary command substitution |
-| Three or more nested wrappers with alternating quotes | NO | |
-| A git alias repointing `core.hooksPath` after install | NO | Surfaces at the next session start, not immediately |
+| `--no-verify`, `--no-verif`, `--no-veri` | ✅ | git accepts abbreviated flags, so all three are covered |
+| `-n`, `-nm`, `-anm` flag clusters | ✅ | |
+| `git -c core.hooksPath=... commit` | ✅ | |
+| `rm` or `chmod -x` on the hook file | ✅ | |
+| `GIT_CONFIG_GLOBAL=`, `HOME=`, `GIT_DIR=`, `HUSKY=0` prefixes | ✅ | |
+| `/usr/bin/git`, `command git`, `env FOO=1 git`, `rtk git` | ✅ | |
+| One layer of `bash -c`, `sh -c`, `eval`, or backticks | ✅ | |
+| `git config core.hooksPath ...` (persistent) | ⚠️ | `husky init` runs exactly this |
+| `Write` or `Edit` into `.git/hooks/` or `.git/config` | ⚠️ | Adding a remote is routine |
+| `$(echo git commit --no-verify)` | ❌ | Arbitrary command substitution |
+| Three or more nested wrappers with alternating quotes | ❌ | |
+| A git alias repointing `core.hooksPath` after install | ❌ | Surfaces at the next session start, not immediately |
 
 ### Pull requests, issues and comments (`gh`)
 
 | Call | | Notes |
 | :-- | :--: | :-- |
-| `gh pr create/edit --body` or `-b`, quoted or unquoted | OK | |
-| `gh pr create/edit --body-file` or `-F <file>` | OK | The file is read and checked |
-| `gh issue create/comment --body` | OK | |
-| `gh pr merge --body` / `--subject` / `-b` / `-t` / `-F` | OK | Denied outright: it lands where nothing can clean it |
-| `gh pr create --fill` / `--fill-verbose` | OK | The body comes from commits the hook already cleaned |
-| `--body-file -` (stdin) | ASK | The hook cannot read stdin, so it asks instead of guessing |
-| **`gh pr create --editor` / `--web`** | NO | Composed in an editor or a browser tab |
-| `gh api` straight at the Contents API | NO | Matches tool names, not arbitrary HTTP |
-| `gh release create --notes`, `gh gist create` | NO | Out of scope |
+| `gh pr create/edit --body` or `-b`, quoted or unquoted | ✅ | |
+| `gh pr create/edit --body-file` or `-F <file>` | ✅ | The file is read and checked |
+| `gh issue create/comment --body` | ✅ | |
+| `gh pr merge --body` / `--subject` / `-b` / `-t` / `-F` | ✅ | Denied outright: it lands where nothing can clean it |
+| `gh pr create --fill` / `--fill-verbose` | ✅ | The body comes from commits the hook already cleaned |
+| `--body-file -` (stdin) | ⚠️ | The hook cannot read stdin, so it asks instead of guessing |
+| **`gh pr create --editor` / `--web`** | ❌ | Composed in an editor or a browser tab |
+| `gh api` straight at the Contents API | ❌ | Matches tool names, not arbitrary HTTP |
+| `gh release create --notes`, `gh gist create` | ❌ | Out of scope |
 
 ### GitHub MCP tools
 
 | Tool | | Notes |
 | :-- | :--: | :-- |
-| `create_pull_request`, `update_pull_request` | OK | `body` field |
-| `create_or_update_file`, `delete_file`, `push_files` | OK | `message` field |
-| `merge_pull_request` | OK | |
-| `add_issue_comment`, `add_reply_to_pull_request_comment` | OK | |
-| `add_comment_to_pending_review`, `pull_request_review_write` | OK | |
-| `issue_write`, `discussion_comment_write` | OK | |
-| A renamed server, or the `mcp__plugin_*__` scoped prefix | OK | The matcher is a regex over the tool name |
-| An MCP server whose git-write tools use different names | NO | |
+| `create_pull_request`, `update_pull_request` | ✅ | `body` field |
+| `create_or_update_file`, `delete_file`, `push_files` | ✅ | `message` field |
+| `merge_pull_request` | ✅ | |
+| `add_issue_comment`, `add_reply_to_pull_request_comment` | ✅ | |
+| `add_comment_to_pending_review`, `pull_request_review_write` | ✅ | |
+| `issue_write`, `discussion_comment_write` | ✅ | |
+| A renamed server, or the `mcp__plugin_*__` scoped prefix | ✅ | The matcher is a regex over the tool name |
+| An MCP server whose git-write tools use different names | ❌ | |
 
 ### After the fact
 
 | | | Notes |
 | :-- | :--: | :-- |
-| Editing a PR body in the GitHub web UI | NO | Nothing observes it |
-| History that already carries trailers | NO | Non-goal. `git filter-repo` exists |
+| Editing a PR body in the GitHub web UI | ❌ | Nothing observes it |
+| History that already carries trailers | ❌ | Non-goal. `git filter-repo` exists |
 
 Short version: if it goes through `git` in an installed repo, or through
 `gh` or the GitHub MCP tools in a Claude Code session, the commit cleaner covers it.
