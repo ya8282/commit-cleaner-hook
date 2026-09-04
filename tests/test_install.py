@@ -55,7 +55,9 @@ def test_refuses_a_tracked_hooks_dir(tmp_path):
     husky.mkdir()
     (husky / "commit-msg").write_text("#!/bin/sh\nexit 0\n")
     subprocess.run(["git", "add", ".husky/commit-msg"], cwd=r, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add husky hook"], cwd=r, check=True)
     subprocess.run(["git", "config", "core.hooksPath", ".husky"], cwd=r, check=True)
+    assert install.is_tracked(str(r), husky / "commit-msg")
     ok, msg = install.install_repo(str(r))
     assert ok is False
     assert "tracked" in msg.lower()
@@ -71,6 +73,7 @@ def test_refusal_still_writes_the_payload_inside_dot_git(tmp_path):
     husky.mkdir()
     (husky / "commit-msg").write_text("#!/bin/sh\nexit 0\n")
     subprocess.run(["git", "add", ".husky/commit-msg"], cwd=r, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "add husky hook"], cwd=r, check=True)
     subprocess.run(["git", "config", "core.hooksPath", ".husky"], cwd=r, check=True)
     install.install_repo(str(r))
     assert (r / ".git" / "commit-cleaner.py").exists()
