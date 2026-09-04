@@ -13,6 +13,9 @@ Claude Code has an [attribution](https://code.claude.com/docs/en/settings-refere
 setting gets reset/deprecated, a different assistant shows up with its own signature, or you paste a message from somewhere and it arrives with a friend. 
 This is the layer that doesn't depend on anyone remembering.
 
+Because it works as a git hook, it cleans every commit in the project — whether Claude,
+another assistant, or you at the keyboard made it.
+
 ## Install
 
 1. Add the plugin in Claude Code by running the following commands:
@@ -30,8 +33,6 @@ This is the layer that doesn't depend on anyone remembering.
 
 Claude Code reminds you at the start of a session if the current project is missing it.
 
-Commit cleaner runs prior to other installed pre-commit hooks, such as `commitlint` and `husky`.
-
 Additional commands:
 
 ```
@@ -45,7 +46,8 @@ python3 <PLUGIN_DIR>/install.py --list
 python3 <PLUGIN_DIR>/install.py --upgrade
 ```
 
-By default, your `<PLUGIN_DIR>` is `~/.claude/plugins/`. The session-start reminder prints the full path.
+`<PLUGIN_DIR>` is versioned and moves with each plugin update, so there is no path
+worth memorising. The session-start reminder prints the current one.
 
 See [What the hook skips](#what-the-hook-skips).
 
@@ -84,11 +86,22 @@ git config commitcleaner.patterns .commitcleaner-patterns
 git config commitcleaner.defaults false   # use only your file
 ```
 
-This features one Python regex per line, matched case-insensitively against whole lines.
+One Python regex per line, matched case-insensitively against whole lines. `#` comments
+and blank lines are ignored, and a regex that won't compile is skipped with a warning
+rather than failing your commit.
+
+Other assistants ship commented out, opt-in — removing someone else's signature without
+being asked is a different kind of rude:
+
+```
+# .commitcleaner-patterns
+^\s*Co-Authored-By:.*@cursor\.com\s*>?\s*$
+^\s*Co-Authored-By:.*\bcodex\b.*$
+```
 
 ## What the hook skips
 
-While the hooks prevent nearly all the paths that Claude Code can crawl
+While the hooks prevent nearly all the paths that Claude Code can slip 
 into your commit messages, there are a few remaining ways it can happen:
 
 - **Commits copied in from somewhere else.** `rebase`, `cherry-pick` and
@@ -121,7 +134,7 @@ ruff check .
 
 ### Local commits (the `commit-msg` hook)
 
-| Path | | Notes |
+| Path | ✅⚠️❌ | Notes |
 | :-- | :--: | :-- |
 | `git commit -m` / `-am` / repeated `-m` | ✅ | |
 | `-F file`, `-F -`, heredoc, pipe | ✅ | The hook sees the assembled message, not your command |
@@ -136,7 +149,7 @@ ruff check .
 
 ### Keeping the hook switched on (the guard)
 
-| Attempt | | Notes |
+| Attempt | ✅⚠️❌ | Notes |
 | :-- | :--: | :-- |
 | `--no-verify`, `--no-verif`, `--no-veri` | ✅ | git accepts abbreviated flags, so all three are covered |
 | `-n`, `-nm`, `-anm` flag clusters | ✅ | |
@@ -153,7 +166,7 @@ ruff check .
 
 ### Pull requests, issues and comments (`gh`)
 
-| Call | | Notes |
+| Call | ✅⚠️❌ | Notes |
 | :-- | :--: | :-- |
 | `gh pr create/edit --body` or `-b`, quoted or unquoted | ✅ | |
 | `gh pr create/edit --body-file` or `-F <file>` | ✅ | The file is read and checked |
@@ -167,7 +180,7 @@ ruff check .
 
 ### GitHub MCP tools
 
-| Tool | | Notes |
+| Tool | ✅⚠️❌ | Notes |
 | :-- | :--: | :-- |
 | `create_pull_request`, `update_pull_request` | ✅ | `body` field |
 | `create_or_update_file`, `delete_file`, `push_files` | ✅ | `message` field |
@@ -180,7 +193,7 @@ ruff check .
 
 ### After the fact
 
-| | | Notes |
+| | ✅⚠️❌ | Notes |
 | :-- | :--: | :-- |
 | Editing a PR body in the GitHub web UI | ❌ | Nothing observes it |
 | History that already carries trailers | ❌ | Non-goal. `git filter-repo` exists |
