@@ -43,3 +43,11 @@ def test_custom_hooks_path_is_resolved(tmp_path):
 
 def test_outside_a_repo_is_silent(tmp_path):
     assert check_install.status(str(tmp_path)) is None
+
+
+def test_registry_is_isolated_from_the_real_home():
+    """This module calls install_repo(), which records into the registry. The
+    autouse fixture in conftest.py must be redirecting that away from the
+    developer's real ~/.commit-cleaner/registry.json -- it once was not, and
+    three entries landed there for real."""
+    assert str(Path.home()) not in str(install.registry_path())

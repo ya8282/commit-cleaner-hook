@@ -10,19 +10,8 @@ sys.path.insert(0, str(PLUGIN))
 
 import install  # noqa: E402
 
-
-@pytest.fixture(autouse=True)
-def _isolated_registry(monkeypatch, tmp_path_factory):
-    """Every install_repo() call in this suite would otherwise write into the
-    developer's real ~/.commit-cleaner/registry.json. Point CLAUDE_PLUGIN_DATA
-    at a disposable directory, unrelated to any test's own tmp_path so it never
-    shows up as an untracked file in a test repo's git status.
-
-    Tests that deliberately exercise the set/unset registry-path behaviour
-    override this within their own body.
-    """
-    registry_dir = tmp_path_factory.mktemp("registry")
-    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(registry_dir))
+# The registry-isolation fixture is autouse in tests/conftest.py so it covers
+# every module, not just this one.
 
 
 def _repo(tmp_path):
