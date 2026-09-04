@@ -36,6 +36,44 @@ def test_referenced_scripts_exist():
                 assert (ROOT / "plugins" / "commit-cleaner" / rel).exists()
 
 
+def test_the_bash_handler_has_no_if_filter():
+    """`if` is narrower than guard.py, so it must not gate the Bash handler.
+
+    hooks.md's Bash matching table (the `bash-if-matching` section) says
+    `Bash(git *)` matches `FOO=bar git push` (leading assignments are
+    stripped), `npm test && git push` (each subcommand is checked), and
+    commands inside `$()` or backticks. It says nothing that would make it
+    match `/usr/bin/git`, `command git`, `\\git`, `env FOO=1 git`,
+    `rtk git`, or `bash -c "git commit --no-verify"` -- in each of those the
+    command name is not `git`. Those are exactly the forms B1 exists to
+    catch, so gating on `Bash(git *)` left the guard dead in production for
+    every evasion it was written for. The same table's closing note is
+    explicit: the `if` filter is best-effort, so use the permission system
+    rather than a hook to enforce a hard allow or deny.
+
+    The cost is one interpreter spawn per Bash call; guard.py returns None
+    for anything it does not recognise. The matcher is anchored so the spawn
+    does not also happen on BashOutput.
+    """
+    cfg = json.loads(HOOKS.read_text())
+    bash_handlers = [
+        h for h in cfg["hooks"]["PreToolUse"] if "Bash" in h["matcher"]
+    ]
+    assert bash_handlers
+    for h in bash_handlers:
+        assert "if" not in h, "an `if` here re-introduces the production-dead guard"
+        assert h["matcher"].startswith("^") and h["matcher"].endswith("$")
+
+
+def test_every_tool_decide_dispatches_has_a_handler():
+    """decide() branching on a tool that no matcher selects is a branch that
+    can never run in production -- which is what NotebookEdit was."""
+    cfg = json.loads(HOOKS.read_text())
+    matchers = [re.compile(h["matcher"]) for h in cfg["hooks"]["PreToolUse"]]
+    for tool in ("Bash", "PowerShell", "Write", "Edit", "NotebookEdit"):
+        assert any(m.search(tool) for m in matchers), f"{tool} has no handler"
+
+
 def test_no_powershell_matcher_paired_with_a_bash_rule():
     """A single `if` rule matches one tool's calls (hooks.md:123)."""
     cfg = json.loads(HOOKS.read_text())

@@ -180,3 +180,30 @@ def test_deny_text_names_the_flag_that_triggered_it():
     same retry. It has to name what was actually matched."""
     assert "-nm" in bash("git commit -nm x")["permissionDecisionReason"]
     assert "--no-verif" in bash("git commit --no-verif -m x")["permissionDecisionReason"]
+
+
+def test_notebook_edit_into_git_hooks_asks():
+    """NotebookEdit names its target notebook_path, not file_path."""
+    d = guard.decide({
+        "tool_name": "NotebookEdit",
+        "tool_input": {"notebook_path": "/Users/x/proj/.git/hooks/commit-msg.ipynb"},
+    })
+    assert d["permissionDecision"] == "ask"
+
+
+def test_ordinary_notebook_edit_untouched():
+    d = guard.decide({
+        "tool_name": "NotebookEdit",
+        "tool_input": {"notebook_path": "/Users/x/proj/analysis.ipynb"},
+    })
+    assert d is None
+
+
+def test_powershell_commands_are_decided_too():
+    """decide() dispatches PowerShell, and hooks.json now matches it."""
+    assert dec("git commit --no-verify -m x") == "deny"
+    d = guard.decide({
+        "tool_name": "PowerShell",
+        "tool_input": {"command": "git commit --no-verify -m x"},
+    })
+    assert d["permissionDecision"] == "deny"

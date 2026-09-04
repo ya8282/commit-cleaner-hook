@@ -1,18 +1,14 @@
 {
-  "description": "Strips AI attribution from commit messages and PR bodies.",
+  "description": "Strips AI attribution from commit messages and PR bodies. The Bash handler carries no `if` filter on purpose: see tests/test_hooks_json.py::test_the_bash_handler_has_no_if_filter.",
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Bash", "if": "Bash(git *)",
+      { "matcher": "^(Bash|PowerShell)$",
         "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/guard.py", "timeout": 10 }] },
-      { "matcher": "Bash", "if": "Bash(chmod *)",
+      { "matcher": "^Write$", "if": "Write(**/.git/**)",
         "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/guard.py", "timeout": 10 }] },
-      { "matcher": "Bash", "if": "Bash(rm *)",
+      { "matcher": "^Edit$", "if": "Edit(**/.git/**)",
         "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/guard.py", "timeout": 10 }] },
-      { "matcher": "Bash", "if": "Bash(gh *)",
-        "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/guard.py", "timeout": 10 }] },
-      { "matcher": "Write", "if": "Write(**/.git/**)",
-        "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/guard.py", "timeout": 10 }] },
-      { "matcher": "Edit", "if": "Edit(**/.git/**)",
+      { "matcher": "^NotebookEdit$", "if": "NotebookEdit(**/.git/**)",
         "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/guard.py", "timeout": 10 }] },
       { "matcher": "mcp__.*__(create_pull_request|update_pull_request|create_or_update_file|delete_file|push_files|merge_pull_request|add_issue_comment|add_comment_to_pending_review|add_reply_to_pull_request_comment|pull_request_review_write|issue_write|discussion_comment_write)",
         "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/guard.py", "timeout": 10 }] }

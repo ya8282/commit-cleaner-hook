@@ -301,7 +301,10 @@ _GIT_PATH = re.compile(r"[/\\]\.git[/\\](hooks[/\\]|config$)")
 
 
 def _file_tool(tool_input):
-    path = tool_input.get("file_path") or ""
+    # NotebookEdit names its target `notebook_path`, not `file_path`, so
+    # reading only `file_path` made the NotebookEdit branch of decide() a
+    # no-op even once hooks.json started spawning the guard for it.
+    path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
     if _GIT_PATH.search(path):
         return _out("ask",
                     "This writes inside .git/, where the commit-cleaner hook lives. "
