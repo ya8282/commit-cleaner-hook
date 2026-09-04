@@ -1,0 +1,7 @@
+{
+  "name": "commit-cleaner",
+  "displayName": "Commit Cleaner",
+  "version": "0.1.0",
+  "description": "Removes AI attribution trailers from commit messages and PR bodies.",
+  "hooks": "./hooks/hooks.json"
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "commit-cleaner-hook",
+  "description": "Deterministic Claude Code hooks. Strip AI attribution from commits and PRs.",
+  "owner": { "name": "Chris Cho", "url": "https://github.com/ya8282" },
+  "plugins": [
+    {
+      "name": "commit-cleaner",
+      "description": "Removes Co-Authored-By: Claude and Claude-Session trailers from commit messages and PR bodies.",
+      "source": "./plugins/commit-cleaner",
+      "category": "productivity"
+    }
+  ]
+}
