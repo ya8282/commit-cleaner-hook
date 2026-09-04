@@ -2,37 +2,27 @@
 
 Prevent Claude from slipping into your git commit messages and pull requests.
 
-It means well. It just keeps signing your work:
+You might have seen then the unwanted messages before:
 
 ```
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_03EgpJ4AzYq9eFNpAOH80
+Claude-Session: https://claude.ai/code/session_ID
 ```
 
-Claude Code has an `attribution` setting that turns this off. Then the
-setting gets reset, or a different agent shows up with its own signature,
-or you paste a commit message from somewhere and it brings a friend. This
-is the layer that doesn't rely on anybody remembering anything.
+Currently, you can use the Claude Code attribution setting to turn
+them off. However, when the behavior breaks or if you unknowingly paste
+them into a commit message, you're unprotected from its intrusion.
 
 ## How it works
 
-Two components. Neither trusts you to remember.
+This is a Claude Code plugin, composed of two components:
 
-**A `commit-msg` git hook** cleans every commit in a repo where it's
-installed, no matter what made the commit. It runs after git has assembled
-the message, so it doesn't care how you got there — `-m`, a heredoc,
-`--amend`, `$EDITOR`, that thing you do with `printf`. It also fails open:
-if it errors, hangs, or `python3` has wandered off, your commit goes
-through anyway. A tool that blocks your work to protect your byline is not
+1. **A `commit-msg` git hook**: cleans every commit in a repo where it's installed. It runs after git adds the commit message,
+   whether added by the `-m` or `--amend` options, heredoc, `$EDITOR`, or `printf`.
 a good trade.
-
-**A `PreToolUse` guard** inside Claude Code covers the exits — `git commit
---no-verify`, deleting the hook, chmodding it, quietly repointing
-`core.hooksPath` — and refuses `gh` and GitHub MCP calls carrying a dirty
-PR body. It stops these before they happen rather than tidying up after,
-because GitHub keeps a public edit history: cleaning a body later just
-publishes a diff of exactly what you removed and when. The receipts outlive
-the cover-up.
+2.  **A `PreToolUse` guard** inside Claude Code covers the exits — `git commit --no-verify`, deleting the hook, chmodding it, quietly repointing `core.hooksPath` — and refuses `gh` and GitHub MCP calls carrying a dirty
+PR body. It stops these before they happen rather than tidying up after, because GitHub keeps a public edit history: cleaning a body later just
+publishes a diff of exactly what you removed and when. The receipts outlive the cover-up.
 
 ## Install
 
@@ -156,6 +146,81 @@ attribution trailers by concatenating fragments at runtime, because a guard
 that matches raw command text will happily block commits containing this
 repo's own test data. The tool is aggressive enough to fight its own test
 suite, which we find funnier than we probably should.
+
+## Coverage at a glance
+
+`OK` prevented, `ASK` prompts you, `NO` gets through.
+
+### Local commits (the `commit-msg` hook)
+
+| Path | | Notes |
+| :-- | :--: | :-- |
+| `git commit -m` / `-am` / repeated `-m` | OK | |
+| `-F file`, `-F -`, heredoc, pipe | OK | The hook sees the assembled message, not your command |
+| `$EDITOR` (no `-m`) | OK | |
+| `--amend`, including `--no-edit` | OK | |
+| `-C <commit>` (reuse a message) | OK | |
+| `git merge -m`, `rebase -i` reword | OK | |
+| Commits by any other tool in an installed repo | OK | It is a git hook, not a Claude hook |
+| **`cherry-pick`, `rebase` replay, `git am`** | NO | git never runs `commit-msg` on these. `git rebase main` re-lands old messages intact. **The gap most likely to bite you.** |
+| `git notes add -m`, `git tag -a -m`, `git stash push -m` | NO | git offers no hook for any of them |
+| Repos where you have not run the install | NO | Per-repo on purpose; the session-start check reminds you |
+
+### Keeping the hook switched on (the guard)
+
+| Attempt | | Notes |
+| :-- | :--: | :-- |
+| `--no-verify`, `--no-verif`, `--no-veri` | OK | git accepts abbreviated flags, so all three are covered |
+| `-n`, `-nm`, `-anm` flag clusters | OK | |
+| `git -c core.hooksPath=... commit` | OK | |
+| `rm` or `chmod -x` on the hook file | OK | |
+| `GIT_CONFIG_GLOBAL=`, `HOME=`, `GIT_DIR=`, `HUSKY=0` prefixes | OK | |
+| `/usr/bin/git`, `command git`, `env FOO=1 git`, `rtk git` | OK | |
+| One layer of `bash -c`, `sh -c`, `eval`, or backticks | OK | |
+| `git config core.hooksPath ...` (persistent) | ASK | `husky init` runs exactly this |
+| `Write` or `Edit` into `.git/hooks/` or `.git/config` | ASK | Adding a remote is routine |
+| `$(echo git commit --no-verify)` | NO | Arbitrary command substitution |
+| Three or more nested wrappers with alternating quotes | NO | |
+| A git alias repointing `core.hooksPath` after install | NO | Surfaces at the next session start, not immediately |
+
+### Pull requests, issues and comments (`gh`)
+
+| Call | | Notes |
+| :-- | :--: | :-- |
+| `gh pr create/edit --body` or `-b`, quoted or unquoted | OK | |
+| `gh pr create/edit --body-file` or `-F <file>` | OK | The file is read and checked |
+| `gh issue create/comment --body` | OK | |
+| `gh pr merge --body` / `--subject` / `-b` / `-t` / `-F` | OK | Denied outright: it lands where nothing can clean it |
+| `gh pr create --fill` / `--fill-verbose` | OK | The body comes from commits the hook already cleaned |
+| `--body-file -` (stdin) | ASK | The hook cannot read stdin, so it asks instead of guessing |
+| **`gh pr create --editor` / `--web`** | NO | Composed in an editor or a browser tab |
+| `gh api` straight at the Contents API | NO | Matches tool names, not arbitrary HTTP |
+| `gh release create --notes`, `gh gist create` | NO | Out of scope |
+
+### GitHub MCP tools
+
+| Tool | | Notes |
+| :-- | :--: | :-- |
+| `create_pull_request`, `update_pull_request` | OK | `body` field |
+| `create_or_update_file`, `delete_file`, `push_files` | OK | `message` field |
+| `merge_pull_request` | OK | |
+| `add_issue_comment`, `add_reply_to_pull_request_comment` | OK | |
+| `add_comment_to_pending_review`, `pull_request_review_write` | OK | |
+| `issue_write`, `discussion_comment_write` | OK | |
+| A renamed server, or the `mcp__plugin_*__` scoped prefix | OK | The matcher is a regex over the tool name |
+| An MCP server whose git-write tools use different names | NO | |
+
+### After the fact
+
+| | | Notes |
+| :-- | :--: | :-- |
+| Editing a PR body in the GitHub web UI | NO | Nothing observes it |
+| History that already carries trailers | NO | Non-goal. `git filter-repo` exists |
+
+Short version: if it goes through `git` in an installed repo, or through
+`gh` or the GitHub MCP tools in a Claude Code session, it is covered. The
+real holes are replayed commits, browser-composed PR bodies, and raw API
+calls.
 
 MIT. Take it, fork it, ship it — no attribution required, which is, after
 all, the entire point.
