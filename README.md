@@ -1,32 +1,34 @@
 # commit-cleaner-hook
 
-Deterministic Claude Code hooks. The first one removes AI attribution
-trailers from commit messages and pull request bodies.
+Keeps AI attribution out of your git history and your pull requests.
 
-## What it does
+Strips trailers like these from commit messages and PR bodies, without you
+having to remember:
 
-Two components work together:
+```
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_03EgpJ4AzYq9eFNpAOH80
+```
 
-- **A commit-msg git hook** cleans the message of every commit made in a
-  repo where it is installed, regardless of which tool made the commit. It
-  strips lines like `Co-Authored-By: Claude <noreply@anthropic.com>` and
-  `Claude-Session: https://claude.ai/code/session_...`, then commits the
-  result. It fails open: if the cleaner errors, hangs, or is missing
-  `python3`, the commit still goes through unmodified.
-- **A PreToolUse guard** inside Claude Code denies (or, where a legitimate
-  use exists, asks about) actions that would bypass or disable the git hook
-  — `git commit --no-verify`, deleting or chmodding the hook file,
-  redirecting `core.hooksPath` or `GIT_DIR` — and denies `gh` CLI and
-  GitHub MCP calls that would post a dirty body straight to GitHub, where
-  no git hook runs. That covers pull request bodies, review and issue
-  comments, issue and discussion bodies, and file writes through the
-  Contents API, in both their `gh` and MCP forms — GitHub keeps a publicly
-  readable edit history, so anything that lands is permanent and the guard
-  prevents rather than remediates.
+Claude Code's own `attribution` setting suppresses these, but the setting
+gets reset, other agents add their own, and a pasted commit carries
+whatever it carries. This is the layer that doesn't depend on anyone
+remembering.
 
-Together they cover the common case: a Claude Code session driving `git`
-and `gh` in this repo. Neither is a substitute for the other; see
-**Known limitations** below for what they miss.
+## How it works
+
+**A `commit-msg` git hook** cleans every commit made in a repo where it's
+installed, whatever tool made it — it runs after git assembles the message,
+so it catches `-m`, heredocs, `--amend`, `$EDITOR`, and the rest. It fails
+open: if it errors, hangs, or `python3` is missing, your commit still goes
+through.
+
+**A `PreToolUse` guard** inside Claude Code blocks the ways around it —
+`git commit --no-verify`, deleting or chmodding the hook, redirecting
+`core.hooksPath` — and denies `gh`/GitHub MCP calls carrying a dirty PR
+body. It prevents rather than cleans up, because GitHub keeps a publicly
+readable edit history: editing a body afterward leaves a permanent record
+of exactly what was removed.
 
 ## Install
 
@@ -35,82 +37,55 @@ and `gh` in this repo. Neither is a substitute for the other; see
 /plugin install commit-cleaner@commit-cleaner-hook
 ```
 
-The plugin install alone only wires the PreToolUse guard and the
-SessionStart reminder. To actually clean commits in a given repo, install
-the commit-msg hook into that repo:
+That wires the guard. To clean commits in a repo, install the git hook
+there too:
 
 ```
 /commit-cleaner-install
 ```
 
-Use the slash command. `${CLAUDE_PLUGIN_ROOT}` is set inside Claude Code
-but not in your shell, so pasting `python3 ${CLAUDE_PLUGIN_ROOT}/install.py`
-into a terminal expands to `python3 /install.py` and fails. To run
-`install.py` from a terminal, substitute the real plugin directory —
-usually under `~/.claude/plugins/`, and the SessionStart reminder prints
-the resolved path when the hook is missing.
+Use the slash command — `${CLAUDE_PLUGIN_ROOT}` is set inside Claude Code
+but not in your shell, so pasting that path into a terminal fails. From a
+terminal, substitute the real plugin directory (under `~/.claude/plugins/`;
+the session-start reminder prints the resolved path).
 
-The install writes a self-contained payload (no dependency on the plugin being
-present later) into the repo's hooks directory — `core.hooksPath` if set,
-otherwise `.git/hooks` — and chains any pre-existing `commit-msg` hook so
-it still runs and can still block a bad commit.
-
-If the hooks directory is tracked by git, install refuses to write into it
-(a shared hooks directory is team infrastructure the tool will not edit
-silently) and instead prints the two lines to add to your committed hook by
-hand.
-
-Other invocations, with `<plugin-dir>` standing in for the real path:
+The install writes a self-contained payload into the repo's hooks directory
+(`core.hooksPath` if set, else `.git/hooks`) and chains any existing
+`commit-msg` hook so it still runs. If that directory is tracked by git, it
+refuses to write there — a shared hooks directory is team infrastructure —
+and prints the two lines to add to your committed hook instead. Submodules
+get their own install.
 
 ```
-python3 <plugin-dir>/install.py --uninstall   # remove, restore any chained hook
-python3 <plugin-dir>/install.py --list        # every repo it's installed into
+python3 <plugin-dir>/install.py --uninstall   # restore any chained hook
+python3 <plugin-dir>/install.py --list        # repos it's installed into
 python3 <plugin-dir>/install.py --upgrade     # regenerate the payload
 ```
 
-`--list` reflects installs only: a repo drops out of it on `--uninstall`,
-and a refused install (tracked hooks directory) never enters it, because
-in that case you still have to add the two printed lines yourself. Any
-other argument is rejected with a usage message rather than being treated
-as `--install`.
-
-Install also walks `git submodule foreach` and installs into each
-submodule, since a submodule is its own repo with its own hooks directory.
-
 ## What gets stripped
 
-By default:
+- `Co-Authored-By:` lines whose email is `@anthropic.com` — a human
+  co-author named Claude, with a different email, survives.
+- `Claude-Session:` and `*-Session:` lines pointing at `claude.ai/code/session_...`.
+- `Generated with [Claude Code](...)` footers, with or without the emoji.
 
-- `Co-Authored-By:` lines whose email is on `@anthropic.com` — a human
-  co-author literally named Claude, with a different email, survives.
-- `Claude-Session:` and other `*-Session:` lines pointing at
-  `https://claude.ai/code/session_...`.
-- `Generated with [Claude Code](...)` footer lines, with or without the
-  robot emoji.
-
-A message that is *only* attribution is left untouched rather than emptied
-— git refuses an empty commit message, and this tool never blocks a
-commit. A clean message is returned byte-identical.
+A message that is *only* attribution is left alone rather than emptied, so
+git never rejects your commit. A clean message comes back byte-identical.
 
 ## Configuration
 
-Set via `git config`, never via environment variables — a git hook does not
-inherit the Claude Code session environment, so an env var would make the
-same repo strip differently depending on who ran the commit.
-
-- `commitcleaner.patterns` — path to a file of additional patterns.
-- `commitcleaner.defaults` — set to `false` to disable the built-in pattern
-  set above and use only your own file.
-
-Pattern file format: one Python regular expression per line, matched with
-`re.search` (case-insensitive) against a whole line of the message. Lines
-starting with `#` and blank lines are ignored. A line that fails to compile
-as a regex is skipped with a warning on stderr rather than failing the
-commit.
+Via `git config`, not environment variables — a git hook doesn't inherit
+your Claude Code session's environment, so an env var would make the same
+repo behave differently depending on who ran the commit.
 
 ```
 git config commitcleaner.patterns .commitcleaner-patterns
+git config commitcleaner.defaults false   # use only your file
 ```
+
+One Python regex per line, matched case-insensitively against whole lines.
+`#` comments and blank lines ignored. A regex that won't compile is skipped
+with a warning rather than failing your commit.
 
 ```
 # .commitcleaner-patterns
@@ -120,53 +95,30 @@ git config commitcleaner.patterns .commitcleaner-patterns
 
 ## Known limitations
 
-This tool covers the common path — a Claude Code session running `git`,
-`gh`, and the GitHub MCP tools in a normal repo. It does not cover
-everything, and overstating coverage would be worse than admitting the
-gap:
+Overstating coverage would be worse than admitting the gaps:
 
-- **`cherry-pick`, `rebase` replay, and `git am` do not run `commit-msg`.**
-  A commit authored elsewhere with a trailer already baked in keeps that
-  trailer when it is replayed onto this repo. `git rebase main` is the
-  common case: rebasing branch commits onto `main` does not re-run
-  `commit-msg` on each replayed commit.
-- **`gh api` posting directly to the Contents API**, or any MCP server
-  whose git-write tools are not named the way GitHub's are, bypasses the
-  guard entirely — the guard matches on known tool names and known `gh`
-  subcommands, not on arbitrary API calls.
-- **`gh pr create --editor` or `--web`** compose the body somewhere the
-  hook cannot see — an external editor or a browser tab — so nothing is
-  checked.
-- **`gh pr create --body-file -`** (reading the body from stdin) returns
-  `ask` rather than a decision, because the hook cannot read the process's
-  stdin to inspect it.
-- **Submodules need their own install.** `install.py` walks `git submodule
-  foreach` at install time, but a submodule added afterward needs a
-  re-run.
-- **`git notes add -m`, `git tag -a -m`, and `git stash push -m`** have no
-  corresponding git hook at all, so attribution in any of these is never
-  stripped.
-- **A git alias that sets `core.hooksPath`** (for example one wired up by
-  `husky init` after this tool installed) can silently redirect hooks
-  elsewhere and defeat the guard. The SessionStart check surfaces this at
-  the start of the next session, not immediately.
-- **Command substitution and deep nesting are not covered.** The guard
-  unwraps one layer of `bash -c "..."` / `eval '...'`, but not arbitrary
-  command substitution such as `$(echo git commit --no-verify)`, nor three
-  or more levels of nested shell wrappers using alternating quote types.
-- **No global `core.hooksPath` install is shipped**, on purpose. A global
-  hooks path is dead in any repo that already sets its own `core.hooksPath`
-  (husky, lefthook, pre-commit all do), and in every repo that does *not*
-  set one, it would silently replace `.git/hooks` machine-wide — a much
-  bigger blast radius than an explicit per-repo install.
+- **Replayed commits keep their trailers.** `cherry-pick`, `rebase`, and
+  `git am` don't run `commit-msg`, so `git rebase main` re-lands existing
+  messages untouched.
+- **`gh pr create --editor` / `--web`** compose the body where no hook can
+  see it. `--body-file -` (stdin) prompts instead of deciding.
+- **`gh api` against the Contents API**, or an MCP server whose git-write
+  tools aren't named like GitHub's, bypasses the guard — it matches known
+  tool names, not arbitrary API calls.
+- **`git notes`, `git tag -a`, `git stash push`** have no git hook at all.
+- **Deep shell nesting.** The guard unwraps one layer of `bash -c "..."` /
+  `eval`, but not `$(echo git commit --no-verify)` or three-plus levels of
+  alternating quotes.
+- **A `core.hooksPath` change after install** (husky, lefthook) redirects
+  hooks away; the session-start check surfaces it next session.
+- **No global install**, deliberately: a global hooks path is dead in any
+  repo that sets its own, and silently replaces `.git/hooks` in every repo
+  that doesn't.
 
 ## Contributing
 
-See `docs/writing-a-hook.md` for the conventions this repo's hooks follow
-and the facts about Claude Code's hook protocol that are easy to get wrong.
-
-Development setup — the shipped code is stdlib-only on Python 3.9+, so the
-two dev dependencies are the test runner and the linter:
+`docs/writing-a-hook.md` has the conventions and the Claude Code hook-protocol
+details that are easy to get wrong. Shipped code is stdlib-only on Python 3.9+:
 
 ```
 pip install pytest ruff
@@ -174,7 +126,9 @@ pytest
 ruff check .
 ```
 
-CI runs both on Python 3.9 through 3.13 on Linux, plus macOS at each end of
-that range. One test fixture builds attribution trailers by concatenating
-fragments at runtime rather than writing them out literally: a guard that
-matches raw command text otherwise refuses this repo's own test data.
+CI runs both on Python 3.9–3.13 on Linux, plus macOS at each end. Test
+fixtures build attribution trailers by concatenating fragments at runtime —
+a guard matching raw command text otherwise rejects this repo's own test
+data.
+
+MIT.
